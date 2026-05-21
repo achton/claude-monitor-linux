@@ -1,0 +1,64 @@
+# Dependabot configuration.
+#
+# Two ecosystems:
+#   1. gomod         — module dependencies (go.mod / go.sum)
+#   2. github-actions — pinned actions used in the workflows
+#
+# Strategy:
+#   - Weekly schedule (Monday morning, local time). Security advisories ignore
+#     this schedule and open PRs immediately when a vulnerable version is in
+#     use, so weekly is safe.
+#   - Minor + patch updates are grouped per-ecosystem so we get ONE PR per
+#     week to review rather than one per package. Major-version bumps stay
+#     as separate PRs because they typically need code changes.
+#   - PR / branch limits kept low to avoid review fatigue.
+#
+# Docs: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Copenhagen
+    open-pull-requests-limit: 5
+    rebase-strategy: auto
+    commit-message:
+      prefix: deps
+      include: scope
+    labels:
+      - dependencies
+      - go
+    groups:
+      go-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Copenhagen
+    open-pull-requests-limit: 3
+    rebase-strategy: auto
+    commit-message:
+      prefix: ci
+      include: scope
+    labels:
+      - dependencies
+      - github-actions
+    groups:
+      actions-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch

@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Claude Monitor icon — uses the official Anthropic brand palette:
+    Dark        #141413
+    Light       #faf9f5
+    Mid Gray    #b0aea5
+    Orange      #d97757
+  Source: github.com/anthropics/skills/blob/main/skills/brand-guidelines/SKILL.md
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <!-- Warm-dark chassis: gentle gradient anchored on the official Dark. -->
+    <linearGradient id="cm-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#1F1E1B"/>
+      <stop offset="100%" stop-color="#141413"/>
+    </linearGradient>
+
+    <!-- Orange gradient: official #D97757 as the midpoint, with a narrow
+         tint/shade on either side for dimensionality. -->
+    <linearGradient id="cm-orange" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#E08869"/>
+      <stop offset="50%"  stop-color="#D97757"/>
+      <stop offset="100%" stop-color="#BD5C3F"/>
+    </linearGradient>
+
+    <!-- Cream accent sparkles use the official Light. -->
+    <linearGradient id="cm-cream" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#FAF9F5"/>
+      <stop offset="100%" stop-color="#E8E6DC"/>
+    </linearGradient>
+
+    <!-- Four-point sparkle, centered at the origin, arm-tip distance 50. -->
+    <path id="cm-spark-path"
+          d="M 0 -50
+             C 4 -18, 8 -8, 14 -4
+             C 22 0, 38 2, 50 0
+             C 38 -2, 22 2, 14 4
+             C 8 8, 4 18, 0 50
+             C -4 18, -8 8, -14 4
+             C -22 2, -38 -2, -50 0
+             C -38 2, -22 0, -14 -4
+             C -8 -8, -4 -18, 0 -50 Z"/>
+  </defs>
+
+  <!-- Dark rounded-square chassis -->
+  <rect x="6" y="6" width="244" height="244" rx="56" ry="56" fill="url(#cm-bg)"/>
+
+  <!-- Top-edge hairline highlight (uses official Light at low opacity) -->
+  <rect x="6" y="6" width="244" height="244" rx="56" ry="56"
+        fill="none" stroke="#FAF9F5" stroke-opacity="0.05" stroke-width="2"/>
+
+  <!-- ===== Measurement gauge ===== -->
+
+  <!-- Gauge track: muted warm gray ring (Mid Gray at low alpha) -->
+  <circle cx="128" cy="128" r="80" fill="none"
+          stroke="#B0AEA5" stroke-opacity="0.22" stroke-width="14"/>
+
+  <!-- Gauge fill: ~75% arc, starts at 12 o'clock, sweeps clockwise -->
+  <path d="M 128 48 A 80 80 0 1 1 48 128"
+        fill="none" stroke="url(#cm-orange)" stroke-width="14"
+        stroke-linecap="round"/>
+
+  <!-- Quarter tick marks (graph cue) — Light Gray, subtle -->
+  <g stroke="#E8E6DC" stroke-opacity="0.35" stroke-width="2" stroke-linecap="round">
+    <line x1="128" y1="38"  x2="128" y2="30"/>
+    <line x1="218" y1="128" x2="226" y2="128"/>
+    <line x1="128" y1="218" x2="128" y2="226"/>
+    <line x1="38"  y1="128" x2="30"  y2="128"/>
+  </g>
+
+  <!-- ===== Sparkle emoji composition ===== -->
+
+  <!-- Main sparkle: Claude orange, centered (~60 px arm-to-arm) -->
+  <use href="#cm-spark-path"
+       transform="translate(128 128) scale(0.6)"
+       fill="url(#cm-orange)"/>
+
+  <!-- Upper-right accent sparkle (cream) -->
+  <use href="#cm-spark-path"
+       transform="translate(168 92) scale(0.24)"
+       fill="url(#cm-cream)"/>
+
+  <!-- Lower-left accent sparkle (cream) -->
+  <use href="#cm-spark-path"
+       transform="translate(92 164) scale(0.18)"
+       fill="url(#cm-cream)"/>
+
+  <!-- Specular highlight on the main sparkle (official Light) -->
+  <circle cx="123" cy="123" r="3" fill="#FAF9F5" fill-opacity="0.75"/>
+</svg>

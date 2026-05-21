@@ -1,0 +1,94 @@
+name: claude-monitor
+arch: amd64
+platform: linux
+version: ${VERSION}
+section: utils
+priority: optional
+maintainer: achton <noreply@example.invalid>
+description: |
+  Linux usage widget + CLI for Claude AI subscriptions.
+  Tracks session and weekly quota utilization in the system tray, with
+  CLI subcommands suitable for waybar/polybar/tmux integration.
+vendor: achton
+homepage: https://github.com/achton/claude-monitor-linux
+license: MIT
+
+depends:
+  - libc6 (>= 2.35)
+  - libgl1
+  - libxcursor1
+  - libxrandr2
+  - libxinerama1
+  - libxi6
+  - libxxf86vm1
+
+recommends:
+  # GNOME users need this extension for the tray to be visible. Listed as a
+  # recommendation, not a hard dep, since installing extensions via apt is
+  # not the norm.
+  - gnome-shell-extension-appindicator
+
+contents:
+  - src: ./bin/claude-monitor
+    dst: /usr/bin/claude-monitor
+    file_info:
+      mode: 0755
+
+  - src: ./packaging/claude-monitor.desktop
+    dst: /usr/share/applications/claude-monitor.desktop
+    file_info:
+      mode: 0644
+
+  - src: ./assets/icons/16x16/apps/claude-monitor.png
+    dst: /usr/share/icons/hicolor/16x16/apps/claude-monitor.png
+    file_info:
+      mode: 0644
+  - src: ./assets/icons/24x24/apps/claude-monitor.png
+    dst: /usr/share/icons/hicolor/24x24/apps/claude-monitor.png
+    file_info:
+      mode: 0644
+  - src: ./assets/icons/32x32/apps/claude-monitor.png
+    dst: /usr/share/icons/hicolor/32x32/apps/claude-monitor.png
+    file_info:
+      mode: 0644
+  - src: ./assets/icons/48x48/apps/claude-monitor.png
+    dst: /usr/share/icons/hicolor/48x48/apps/claude-monitor.png
+    file_info:
+      mode: 0644
+  - src: ./assets/icons/64x64/apps/claude-monitor.png
+    dst: /usr/share/icons/hicolor/64x64/apps/claude-monitor.png
+    file_info:
+      mode: 0644
+  - src: ./assets/icons/128x128/apps/claude-monitor.png
+    dst: /usr/share/icons/hicolor/128x128/apps/claude-monitor.png
+    file_info:
+      mode: 0644
+  - src: ./assets/icons/256x256/apps/claude-monitor.png
+    dst: /usr/share/icons/hicolor/256x256/apps/claude-monitor.png
+    file_info:
+      mode: 0644
+  - src: ./assets/icons/512x512/apps/claude-monitor.png
+    dst: /usr/share/icons/hicolor/512x512/apps/claude-monitor.png
+    file_info:
+      mode: 0644
+  - src: ./assets/icon.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/claude-monitor.svg
+    file_info:
+      mode: 0644
+
+  - src: ./LICENSE
+    dst: /usr/share/doc/claude-monitor/copyright
+    file_info:
+      mode: 0644
+  - src: ./README.md
+    dst: /usr/share/doc/claude-monitor/README.md
+    file_info:
+      mode: 0644
+  - src: ./packaging/claude-monitor.1.gz
+    dst: /usr/share/man/man1/claude-monitor.1.gz
+    file_info:
+      mode: 0644
+
+scripts:
+  postinstall: ./packaging/deb/postinst
+  preremove: ./packaging/deb/prerm

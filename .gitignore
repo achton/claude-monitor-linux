@@ -1,0 +1,16 @@
+bin/
+dist/
+*.deb
+*.AppImage
+*.AppDir/
+*.zsync
+coverage.out
+.idea/
+.vscode/
+.claude/
+
+# Generated from assets/icon.svg via `make icons`. CI regenerates with
+# librsvg2-bin; committing them would invite drift.
+assets/icons/
+packaging/claude-monitor.1.gz
+

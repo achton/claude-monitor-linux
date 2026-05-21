@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc pkg-config librsvg2-bin gzip \
+            libgl1-mesa-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxxf86vm-dev xorg-dev
+
+      - name: Install nfpm and appimagetool
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          mkdir -p ~/.local/bin
+          curl -fsSL -o ~/.local/bin/appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x ~/.local/bin/appimagetool
+          # AppImage on CI requires FUSE or extraction; appimagetool supports --appimage-extract-and-run.
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Extract version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: make build VERSION=${{ steps.ver.outputs.version }}
+
+      - name: Test
+        run: make test
+
+      - name: Headless safety test
+        run: make headless-test
+
+      - name: Icons + man page
+        run: make icons manpage VERSION=${{ steps.ver.outputs.version }}
+
+      - name: Build .deb
+        run: make deb VERSION=${{ steps.ver.outputs.version }}
+
+      - name: Build AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: make appimage VERSION=${{ steps.ver.outputs.version }}
+
+      - name: Checksums
+        run: make checksums
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.deb
+            dist/*.AppImage
+            dist/SHA256SUMS
+          generate_release_notes: true
+          fail_on_unmatched_files: true

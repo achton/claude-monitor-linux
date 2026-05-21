@@ -1,0 +1,114 @@
+.TH CLAUDE-MONITOR 1 "2026-05-21" "claude-monitor 0.1.0" "User Commands"
+.SH NAME
+claude-monitor \- Linux usage widget and CLI for Claude AI subscriptions
+.SH SYNOPSIS
+.B claude-monitor
+[\fISUBCOMMAND\fR] [\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B claude-monitor
+tracks Claude AI subscription usage (session 5-hour and weekly 7-day quotas)
+and displays the current utilization in your system tray. A CLI surface
+mirrors every tray action so you can integrate with waybar, polybar, tmux,
+shell prompts, and scripts.
+
+Bare invocation launches the tray. Use subcommands for non-GUI access.
+
+.SH SUBCOMMANDS
+.TP
+\fBtray\fR
+Launch the system tray (default if no subcommand given).
+.TP
+\fBstatus\fR [\fB--account\fR \fINAME\fR] [\fB--json\fR | \fB--format\fR \fITPL\fR | \fB--quiet\fR]
+Print current usage for one account.
+.TP
+\fBaccounts\fR [\fB--json\fR]
+List all configured accounts.
+.TP
+\fBadd-token\fR [\fITOKEN\fR] [\fB--email\fR \fIEMAIL\fR]
+Add a Claude account by OAuth access token. Reads from stdin if no argument.
+.TP
+\fBimport-env\fR \fIFILE\fR
+Import ACCOUNT_EMAIL_N and ACCOUNT_KEY_N pairs from a .env file.
+.TP
+\fBremove\fR \fINAME\fR
+Remove an account and its usage history.
+.TP
+\fBpoll\fR [\fB--account\fR \fINAME\fR]
+Force a poll cycle. Delegates to the running tray via D-Bus when possible.
+.TP
+\fBpin\fR \fINAME\fR
+Pin an account to drive the tray badge percentage.
+.TP
+\fBunpin\fR
+Clear the tray pin (falls back to first-found account).
+.TP
+\fBprobe\fR [\fB--account\fR \fINAME\fR]
+Reset the OAuth Usage endpoint state machine back to \(lqhealthy\(rq and
+attempt one poll. Use after a long backoff.
+.TP
+\fBversion\fR
+Print the binary version and exit.
+
+.SH STATUS OUTPUT FORMATS
+.TP
+plain (default)
+Human-readable single line.
+.TP
+\fB--json\fR
+Machine-readable JSON object suitable for jq.
+.TP
+\fB--format\fR \fITEMPLATE\fR
+Go text/template against the same fields as \fB--json\fR. Useful for
+status-bar integrations.
+Example: \fIclaude-monitor status --format='LLM {{.PrimaryPercent}}%%'\fR
+
+.SH EXIT CODES (\fBstatus\fR)
+.TP
+0
+Primary usage below 75%.
+.TP
+10
+At or above 75% (caution).
+.TP
+20
+At or above 90% (warning).
+.TP
+30
+At or above 95% (critical).
+.TP
+1
+Error: no data, network failure, etc.
+
+.SH FILES
+.TP
+\fI~/.local/share/claude-monitor/usage.db\fR
+SQLite database (WAL). Permissions enforced at 0600 / 0700.
+.TP
+\fI~/.config/claude-monitor/config.toml\fR
+TOML configuration. Auto-created on first run.
+.TP
+\fI~/.local/state/claude-monitor/debug.log\fR
+Rolling log file (slog JSON). Rotated at 5 MB.
+.TP
+\fI~/.config/autostart/claude-monitor.desktop\fR
+Autostart entry; presence controlled by the Settings window or by the user.
+
+.SH EXAMPLES
+.TP
+Add an account from stdin
+\fIecho "$TOKEN" | claude-monitor add-token\fR
+.TP
+Waybar custom module
+\fI{"custom/claude": {"exec": "claude-monitor status --format='{{.PrimaryPercent}}%%'", "interval": 60}}\fR
+.TP
+tmux right-status
+\fIset -g status-right '#(claude-monitor status --format=\(dq{{.PrimaryPercent}}%%\(dq)'\fR
+.TP
+Shell warning above 90%
+\fIif ! claude-monitor status --quiet; then echo "Claude usage high!"; fi\fR
+
+.SH SEE ALSO
+Project: https://github.com/achton/claude-monitor-linux
+
+.SH LICENSE
+MIT.

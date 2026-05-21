@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Claude Monitor
+GenericName=Claude Usage Monitor
+Comment=Track Claude AI subscription usage from your system tray
+Exec=claude-monitor tray
+Icon=claude-monitor
+Terminal=false
+Categories=Utility;Network;Monitor;
+Keywords=claude;anthropic;ai;usage;quota;
+StartupNotify=false
+X-GNOME-UsesNotifications=true

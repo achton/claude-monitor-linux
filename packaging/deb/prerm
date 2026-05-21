@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+
+# Per-user data lives in $HOME/.local and $HOME/.config; we deliberately do
+# not touch it on uninstall. Users wanting a clean wipe can:
+#   rm -rf ~/.local/share/claude-monitor ~/.config/claude-monitor ~/.local/state/claude-monitor
+
+exit 0

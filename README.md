@@ -67,7 +67,7 @@ make build
 ./bin/claude-monitor version
 ```
 
-Requires Go 1.22+.
+Requires the Go version pinned in `go.mod` (currently 1.25+, driven by Fyne's minimum).
 
 ## Quick start
 

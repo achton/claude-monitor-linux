@@ -28,7 +28,10 @@ jobs:
         run: go vet ./...
 
       - name: go test
-        run: go test -race -cover ./...
+        # -cover triggers `go: no such tool "covdata"` on packages without
+        # _test.go files under actions/setup-go's install. Keep -race for the
+        # data-race sanity check; coverage is exercised locally via `make test`.
+        run: go test -race ./...
 
       - name: Build binary
         run: |

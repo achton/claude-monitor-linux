@@ -116,18 +116,35 @@ func (p *Poller) pollOne(ctx context.Context, c store.Credential) error {
 	if !c.AccessToken.Valid || c.AccessToken.String == "" {
 		return errors.New("missing access token")
 	}
-	token := c.AccessToken.String
 	accountID := c.AccountID.String
 	if accountID == "" {
 		return errors.New("credential has no account_id")
 	}
 
-	r, source, newState, attempts, err := p.fetch(ctx, c, token)
+	// Pre-poll: if this credential was imported from Claude Code and the
+	// access token is at or near expiry, re-read the source file. Claude
+	// Code refreshes its own token, so we just piggyback on its rotation.
+	c = p.maybeRefreshFromClaudeCode(ctx, c)
+	token := c.AccessToken.String
+
+	r, _, newState, attempts, err := p.fetch(ctx, c, token)
+
+	// On 401 for a Claude-Code-sourced credential, re-read the file once
+	// and retry — covers the case where Claude Code rotated the token
+	// after our last pre-poll check.
+	if errors.Is(err, api.ErrUnauthorized) && c.Source == "claude-code" {
+		if refreshed, ok := p.tryReReadClaudeCode(ctx, c); ok {
+			c = refreshed
+			token = c.AccessToken.String
+			r, _, newState, attempts, err = p.fetch(ctx, c, token)
+		}
+	}
+
 	if err != nil {
 		_ = p.Store.UpdateCredentialPollState(ctx, c.ID, err.Error(), newState, attempts)
+		p.maybeNotifyError(c, err)
 		return err
 	}
-	_ = source
 
 	if err := p.writeReading(ctx, accountID, r); err != nil {
 		_ = p.Store.UpdateCredentialPollState(ctx, c.ID, err.Error(), newState, attempts)
@@ -141,6 +158,87 @@ func (p *Poller) pollOne(ctx context.Context, c store.Credential) error {
 	}
 	p.suppressFirst[c.ID] = false
 	return nil
+}
+
+// maybeRefreshFromClaudeCode re-reads ~/.claude/.credentials.json when the
+// credential is sourced from Claude Code AND the stored token has expired
+// (or is within 5 minutes of expiring). It writes back to the DB on change
+// and returns the refreshed credential. On any failure it returns c unchanged.
+func (p *Poller) maybeRefreshFromClaudeCode(ctx context.Context, c store.Credential) store.Credential {
+	if c.Source != "claude-code" {
+		return c
+	}
+	if c.ExpiresAt.Valid && c.ExpiresAt.Int64 > 0 {
+		if time.Until(time.Unix(c.ExpiresAt.Int64, 0)) > 5*time.Minute {
+			return c
+		}
+	}
+	if refreshed, ok := p.tryReReadClaudeCode(ctx, c); ok {
+		return refreshed
+	}
+	return c
+}
+
+// tryReReadClaudeCode reads the credentials file, updates the DB if the
+// access token differs, and returns the new in-memory Credential. The
+// boolean is true only on a successful update.
+func (p *Poller) tryReReadClaudeCode(ctx context.Context, c store.Credential) (store.Credential, bool) {
+	spec, _, err := ReReadClaudeCodeCredential("")
+	if err != nil {
+		log.Logger().Warn("claude-code re-read failed",
+			slog.String("label", c.Label), slog.String("err", err.Error()))
+		return c, false
+	}
+	if spec.AccessToken == "" {
+		return c, false
+	}
+	if spec.AccessToken == c.AccessToken.String {
+		// Same token — Claude Code hasn't rotated yet. Don't retry the API
+		// call with it; just keep the expiry fresh in the DB so we don't
+		// re-read on every poll.
+		log.Logger().Debug("claude-code re-read returned same token; Claude Code has not rotated yet",
+			slog.String("label", c.Label))
+		if spec.ExpiresAt != 0 && (!c.ExpiresAt.Valid || spec.ExpiresAt != c.ExpiresAt.Int64) {
+			_ = p.Store.RefreshCredentialToken(ctx, c.ID, spec.AccessToken, spec.RefreshToken, spec.ExpiresAt)
+			c.ExpiresAt = sql.NullInt64{Int64: spec.ExpiresAt, Valid: true}
+		}
+		return c, false
+	}
+	if err := p.Store.RefreshCredentialToken(ctx, c.ID, spec.AccessToken, spec.RefreshToken, spec.ExpiresAt); err != nil {
+		log.Logger().Warn("claude-code refresh DB update failed",
+			slog.String("label", c.Label), slog.String("err", err.Error()))
+		return c, false
+	}
+	log.Logger().Info("claude-code token refreshed from source file",
+		slog.String("label", c.Label))
+	c.AccessToken = sql.NullString{String: spec.AccessToken, Valid: true}
+	if spec.RefreshToken != "" {
+		c.RefreshToken = sql.NullString{String: spec.RefreshToken, Valid: true}
+	}
+	if spec.ExpiresAt != 0 {
+		c.ExpiresAt = sql.NullInt64{Int64: spec.ExpiresAt, Valid: true}
+	}
+	c.UsageEndpointState = "healthy"
+	c.UsageEndpointAttempts = 0
+	return c, true
+}
+
+// maybeNotifyError fires a desktop notification when a credential's poll
+// transitions from healthy → erroring. We only notify on the boundary to
+// avoid spamming the user every 30 s while the failure persists.
+func (p *Poller) maybeNotifyError(c store.Credential, pollErr error) {
+	if p.Evaluator == nil || p.Evaluator.Notifier == nil {
+		return
+	}
+	wasHealthy := !c.LastError.Valid || c.LastError.String == ""
+	if !wasHealthy {
+		return
+	}
+	body := fmt.Sprintf("%s — polls failing. Refresh in the dashboard, or re-run import-claude-code.", c.Label)
+	if errors.Is(pollErr, api.ErrUnauthorized) {
+		body = fmt.Sprintf("%s — token rejected (401). Run import-claude-code to re-link.", c.Label)
+	}
+	_, _ = p.Evaluator.Notifier.Send(p.Evaluator.AppName, "Claude Monitor: polling failed", body, notify.UrgencyNormal)
 }
 
 // fetch applies the per-account state machine and returns a UsageReading.

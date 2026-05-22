@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/achton/claude-monitor-linux/internal/api"
+	"github.com/achton/claude-monitor-linux/internal/store"
 )
 
 // AddAccountResult is the outcome of an AddAccountWithToken call.
@@ -17,21 +18,42 @@ type AddAccountResult struct {
 	Label string
 }
 
-// AddAccountWithToken validates the token via the API (OAuth Usage first,
-// then CountTokens fallback for org-id), then writes the credential + account.
-//
-// Label precedence: explicit labelHint > email > shortened org id.
+// CredentialSpec carries the optional refresh-token and metadata that an
+// import flow may have available alongside the access token. Empty fields are
+// fine — UpsertCredentialForAccount preserves existing values on update.
+type CredentialSpec struct {
+	AccessToken      string
+	RefreshToken     string
+	ExpiresAt        int64  // unix seconds; 0 = unknown
+	Scopes           string // space-separated, or comma-separated — stored as-is
+	SubscriptionType string
+	RateLimitTier    string
+	Source           string // 'token' | 'env' | 'claude-code'; defaults to 'token'
+}
+
+// AddAccountWithToken validates a raw access token via the API and writes a
+// minimal credential. Kept for the existing CLI surface (`add-token`,
+// import-env) that has no refresh token to thread through.
 func (p *Poller) AddAccountWithToken(ctx context.Context, token, email, labelHint string) (AddAccountResult, error) {
-	token = strings.TrimSpace(token)
-	if token == "" {
+	return p.AddAccountWithCredential(ctx, CredentialSpec{AccessToken: token, Source: "token"}, email, labelHint)
+}
+
+// AddAccountWithCredential validates the access token via the API (OAuth Usage
+// first, CountTokens fallback for org-id) and persists the full credential
+// spec. Source defaults to "token" when unset.
+func (p *Poller) AddAccountWithCredential(ctx context.Context, spec CredentialSpec, email, labelHint string) (AddAccountResult, error) {
+	spec.AccessToken = strings.TrimSpace(spec.AccessToken)
+	if spec.AccessToken == "" {
 		return AddAccountResult{}, errors.New("token is empty")
 	}
+	if spec.Source == "" {
+		spec.Source = "token"
+	}
 
-	// Try OAuth Usage first — gets us org id + a current reading in one call.
-	r, err := p.API.OAuthUsage(ctx, token)
+	r, err := p.API.OAuthUsage(ctx, spec.AccessToken)
 	if err == nil && r.OrganizationID != "" {
 		label := pickLabel(labelHint, email, r.OrganizationID)
-		if err := p.persistCredential(ctx, r.OrganizationID, label, email, token, r); err != nil {
+		if err := p.persistCredential(ctx, r.OrganizationID, label, email, spec, r); err != nil {
 			return AddAccountResult{}, err
 		}
 		return AddAccountResult{OrgID: r.OrganizationID, Label: label}, nil
@@ -41,8 +63,7 @@ func (p *Poller) AddAccountWithToken(ctx context.Context, token, email, labelHin
 		return AddAccountResult{}, errors.New("token rejected (401)")
 	}
 
-	// Fall back to CountTokens for org-id identification only.
-	org, ctErr := p.API.CountTokens(ctx, token)
+	org, ctErr := p.API.CountTokens(ctx, spec.AccessToken)
 	if ctErr != nil {
 		if err != nil {
 			return AddAccountResult{}, fmt.Errorf("oauth_usage: %w; count_tokens: %v", err, ctErr)
@@ -50,7 +71,7 @@ func (p *Poller) AddAccountWithToken(ctx context.Context, token, email, labelHin
 		return AddAccountResult{}, fmt.Errorf("count_tokens: %w", ctErr)
 	}
 	label := pickLabel(labelHint, email, org)
-	if err := p.persistCredential(ctx, org, label, email, token, api.UsageReading{}); err != nil {
+	if err := p.persistCredential(ctx, org, label, email, spec, api.UsageReading{}); err != nil {
 		return AddAccountResult{}, err
 	}
 	return AddAccountResult{OrgID: org, Label: label}, nil
@@ -72,14 +93,23 @@ func pickLabel(labelHint, email, orgID string) string {
 	return orgID
 }
 
-func (p *Poller) persistCredential(ctx context.Context, accountID, label, email, token string, r api.UsageReading) error {
+func (p *Poller) persistCredential(ctx context.Context, accountID, label, email string, spec CredentialSpec, r api.UsageReading) error {
 	if err := p.Store.UpsertAccount(ctx, nil, accountID, label, email, "Max"); err != nil {
 		return err
 	}
-	if err := p.Store.UpsertCredentialForAccount(ctx, nil, accountID, label, "token", token); err != nil {
+	if err := p.Store.UpsertCredentialForAccount(ctx, nil, store.CredentialUpsertSpec{
+		AccountID:        accountID,
+		Label:            label,
+		Source:           spec.Source,
+		AccessToken:      spec.AccessToken,
+		RefreshToken:     spec.RefreshToken,
+		ExpiresAt:        spec.ExpiresAt,
+		Scopes:           spec.Scopes,
+		SubscriptionType: spec.SubscriptionType,
+		RateLimitTier:    spec.RateLimitTier,
+	}); err != nil {
 		return err
 	}
-	// Write current usage if we already have it.
 	if !r.FiveHourReset.IsZero() || !r.SevenDayReset.IsZero() {
 		return p.writeReading(ctx, accountID, r)
 	}

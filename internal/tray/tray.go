@@ -199,6 +199,11 @@ func newState(env *cli.Env, app fyne.App, desk desktop.App, cfg config.Config) *
 }
 
 func (st *state) pollLoop(ctx context.Context) {
+	// Start the fsnotify watcher on Claude Code's credentials file. Silently
+	// skips when Claude Code isn't installed; paste-only users see the same
+	// behavior as before.
+	st.env.Poller.StartCredentialsWatcher(ctx)
+
 	if _, err := st.env.Poller.PollAll(ctx); err != nil {
 		cmlog.Logger().Warn("initial poll", slog.String("err", err.Error()))
 	}

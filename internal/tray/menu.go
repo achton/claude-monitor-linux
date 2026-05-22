@@ -10,6 +10,9 @@ import (
 // rebuildMenu re-creates the system tray menu and applies it via the desktop.App
 // integration. Kept deliberately small — multi-account complexity lives in
 // the GUI Settings → Manage accounts dialog, not inline here.
+//
+// Callable from any goroutine — SetSystemTrayMenu is marshalled onto the
+// Fyne goroutine via fyne.Do.
 func (st *state) rebuildMenu() {
 	if st.desk == nil {
 		return
@@ -40,16 +43,19 @@ func (st *state) rebuildMenu() {
 		fyne.NewMenuItem("Add account…", st.openAddAccount),
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Quit Claude Monitor", func() {
-			st.app.Quit()
+			fyne.Do(st.app.Quit)
 		}),
 	)
 
 	menu := fyne.NewMenu("Claude Monitor", items...)
-	st.desk.SetSystemTrayMenu(menu)
+	fyne.Do(func() {
+		st.desk.SetSystemTrayMenu(menu)
+	})
 }
 
 // currentStatusLine returns a short human-readable summary of the active
 // account's usage for the tray menu header. Returns "" when there is no data.
+// Appends a "· ⚠ stale" suffix when the active credential's last poll failed.
 func (st *state) currentStatusLine() string {
 	accs, _ := st.env.Store.ListAccounts(st.ctx)
 	if len(accs) == 0 {

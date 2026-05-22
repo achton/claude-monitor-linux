@@ -35,19 +35,24 @@ func NewAccountListWindow(app fyne.App, env *cli.Env) fyne.Window {
 
 	var refresh func()
 	refresh = func() {
-		body.RemoveAll()
-		accs, err := env.Store.ListAccounts(env.Ctx)
-		if err != nil {
-			body.Add(widget.NewLabel("Error: " + err.Error()))
-			return
-		}
-		if len(accs) == 0 {
-			body.Add(buildEmptyState(app, env, refresh))
-			return
-		}
-		pin := env.Store.GetSettingDefault(env.Ctx, "tray_pinned_account", "")
-		active := pickActiveAccount(accs, pin)
-		body.Add(buildDashboard(app, env, active, accs, refresh))
+		// All UI mutations must run on the Fyne goroutine. fyne.Do is a
+		// no-op when already on that goroutine, so calling this from both
+		// UI-thread and goroutine callers is safe.
+		fyne.Do(func() {
+			body.RemoveAll()
+			accs, err := env.Store.ListAccounts(env.Ctx)
+			if err != nil {
+				body.Add(widget.NewLabel("Error: " + err.Error()))
+				return
+			}
+			if len(accs) == 0 {
+				body.Add(buildEmptyState(app, env, refresh))
+				return
+			}
+			pin := env.Store.GetSettingDefault(env.Ctx, "tray_pinned_account", "")
+			active := pickActiveAccount(accs, pin)
+			body.Add(buildDashboard(app, env, active, accs, refresh))
+		})
 	}
 	refresh()
 

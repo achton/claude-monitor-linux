@@ -88,13 +88,14 @@ func Run(env *cli.Env, cfg config.Config) error {
 	defer cancel()
 	go state.pollLoop(ctx)
 
-	// Signal handler.
+	// Signal handler. a.Quit() touches Fyne state, so marshal back onto
+	// the Fyne goroutine.
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sig
 		cmlog.Logger().Info("tray: signal received, shutting down")
-		a.Quit()
+		fyne.Do(a.Quit)
 	}()
 
 	// Block on Fyne's main event loop. This handles both the tray menu/icon
@@ -227,36 +228,42 @@ func (st *state) pollLoop(ctx context.Context) {
 }
 
 func (st *state) focusAccountList() {
-	st.winMu.Lock()
-	w := st.accountListWindow
-	st.winMu.Unlock()
-	if w != nil {
-		w.Show()
-		w.RequestFocus()
-		return
-	}
-	nw := ui.NewAccountListWindow(st.app, st.env)
-	st.winMu.Lock()
-	st.accountListWindow = nw
-	st.winMu.Unlock()
-	nw.SetOnClosed(func() {
+	// Menu callbacks fire on a non-UI goroutine. All window construction
+	// and mutation must hop onto the Fyne goroutine via fyne.Do.
+	fyne.Do(func() {
 		st.winMu.Lock()
-		st.accountListWindow = nil
+		w := st.accountListWindow
 		st.winMu.Unlock()
+		if w != nil {
+			w.Show()
+			w.RequestFocus()
+			return
+		}
+		nw := ui.NewAccountListWindow(st.app, st.env)
+		st.winMu.Lock()
+		st.accountListWindow = nw
+		st.winMu.Unlock()
+		nw.SetOnClosed(func() {
+			st.winMu.Lock()
+			st.accountListWindow = nil
+			st.winMu.Unlock()
+		})
+		nw.Show()
 	})
-	nw.Show()
 }
 
 // openAddAccount opens the add-account window directly from the tray menu.
 func (st *state) openAddAccount() {
-	w := ui.NewAddAccountWindow(st.app, st.env, func() {
-		st.winMu.Lock()
-		if st.accountListWindow != nil {
-			st.accountListWindow.Content().Refresh()
-		}
-		st.winMu.Unlock()
-		st.rebuildMenu()
-		st.refreshIcon()
+	fyne.Do(func() {
+		w := ui.NewAddAccountWindow(st.app, st.env, func() {
+			st.winMu.Lock()
+			if st.accountListWindow != nil {
+				st.accountListWindow.Content().Refresh()
+			}
+			st.winMu.Unlock()
+			st.rebuildMenu()
+			st.refreshIcon()
+		})
+		w.Show()
 	})
-	w.Show()
 }

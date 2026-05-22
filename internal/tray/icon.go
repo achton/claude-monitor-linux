@@ -35,21 +35,27 @@ var brandIconPNG []byte
 // When no data is available, shows the brand icon. With data, renders a
 // two-bar visual (5h usage on the left, 7d usage on the right) and sets a
 // multi-line tooltip with the exact percentages + reset times.
+//
+// Callable from any goroutine — the systray + Fyne mutations are marshalled
+// onto the Fyne goroutine via fyne.Do.
 func (st *state) refreshIcon() {
 	if st.desk == nil {
 		return
 	}
 	v, ok := st.iconNumbers()
 	var iconBytes []byte
+	tooltip := "Claude Monitor — no data yet"
 	if !ok {
 		iconBytes = brandIconPNG
-		systray.SetTooltip("Claude Monitor — no data yet")
 	} else {
 		iconBytes = renderDuoBarIcon(v.sessionUsage, v.weeklyUsage)
-		systray.SetTooltip(tooltipFor(v))
+		tooltip = tooltipFor(v)
 	}
 	res := fyne.NewStaticResource("claude-monitor-tray", iconBytes)
-	st.desk.SetSystemTrayIcon(res)
+	fyne.Do(func() {
+		systray.SetTooltip(tooltip)
+		st.desk.SetSystemTrayIcon(res)
+	})
 }
 
 // iconValues holds the values used to render the icon + tooltip.

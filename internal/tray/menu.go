@@ -77,5 +77,11 @@ func (st *state) currentStatusLine() string {
 	if rec.WeeklyAllPercent.Valid {
 		weekly = int(rec.WeeklyAllPercent.Float64 + 0.5)
 	}
-	return fmt.Sprintf("Session %d%%   ·   Weekly %d%%", sess, weekly)
+	line := fmt.Sprintf("Session %d%%   ·   Weekly %d%%", sess, weekly)
+
+	cred, err := st.env.Store.GetCredentialByAccountID(st.ctx, target.ID)
+	if err == nil && cred.LastError.Valid && cred.LastError.String != "" {
+		line += "   ·   ⚠ stale"
+	}
+	return line
 }

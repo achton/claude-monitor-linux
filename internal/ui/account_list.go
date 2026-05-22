@@ -85,7 +85,14 @@ func buildDashboard(app fyne.App, env *cli.Env, active store.Account, all []stor
 	sessionReset := parseISOOrZero(rec.SessionReset)
 	weeklyReset := parseISOOrZero(rec.WeeklyReset)
 
+	cred, _ := env.Store.GetCredentialByAccountID(env.Ctx, active.ID)
+
 	parts := []fyne.CanvasObject{}
+
+	// Polling-health banner — only when we have a real last_error.
+	if cred.LastError.Valid && cred.LastError.String != "" {
+		parts = append(parts, buildPollErrorBanner(app, env, active, cred, rec, refresh))
+	}
 
 	// Multi-account selector — only when relevant.
 	if len(all) > 1 {
@@ -235,4 +242,69 @@ func parseISOOrZero(s sql.NullString) time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+// buildPollErrorBanner renders the warning surface shown above the dashboard
+// metrics when the active credential's most recent poll failed. The numbers
+// below are stale — be honest about it.
+func buildPollErrorBanner(app fyne.App, env *cli.Env, active store.Account, cred store.Credential, rec store.UsageRecord, refresh func()) fyne.CanvasObject {
+	bg := canvas.NewRectangle(color.NRGBA{R: 0xC0, G: 0x3A, B: 0x24, A: 0x33})
+	bg.StrokeColor = color.NRGBA{R: 0xC0, G: 0x3A, B: 0x24, A: 0xCC}
+	bg.StrokeWidth = 1
+
+	title := widget.NewLabelWithStyle("⚠  Polls failing — numbers below are stale",
+		fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+
+	lastGood := "last successful poll: never"
+	if !rec.Timestamp.IsZero() {
+		lastGood = fmt.Sprintf("last successful poll %s ago",
+			compactDuration(time.Since(rec.Timestamp)))
+	}
+	body := fmt.Sprintf("%s\n%s", cred.LastError.String, lastGood)
+	if cred.Source != "claude-code" {
+		// Paste-only / env-imported account: there is no auto-refresh path.
+		// Tell the user instead of leaving them to guess why no Re-import
+		// button is offered.
+		body += "\n\nThis account was added without Claude Code. Auto-refresh\n" +
+			"isn't available — run `claude-monitor add-token` (or\n" +
+			"`import-claude-code` if Claude Code is installed) with a fresh\n" +
+			"token to recover."
+	}
+	detail := widget.NewLabel(body)
+	detail.Wrapping = fyne.TextWrapWord
+
+	actions := []fyne.CanvasObject{}
+	if cred.Source == "claude-code" {
+		actions = append(actions, widget.NewButton("Re-import token", func() {
+			go func() {
+				if _, err := env.Poller.ImportFromClaudeCode(env.Ctx, ""); err == nil {
+					_ = env.Poller.PollAccount(env.Ctx, active.ID)
+				}
+				refresh()
+			}()
+		}))
+	}
+	actions = append(actions, widget.NewButton("Retry now", func() {
+		go func() {
+			_, _ = env.Poller.PollAll(env.Ctx)
+			refresh()
+		}()
+	}))
+
+	inner := container.NewVBox(title, detail, container.NewHBox(actions...))
+	padded := container.NewPadded(inner)
+	return container.NewStack(bg, padded)
+}
+
+func compactDuration(d time.Duration) string {
+	if d < time.Minute {
+		return "just now"
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+	return fmt.Sprintf("%dd%dh", int(d.Hours()/24), int(d.Hours())%24)
 }

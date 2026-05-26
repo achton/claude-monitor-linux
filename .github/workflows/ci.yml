@@ -48,6 +48,4 @@ jobs:
             ./bin/claude-monitor version
           env -i HOME=$(mktemp -d) PATH=/usr/bin XDG_RUNTIME_DIR=$(mktemp -d) \
             ./bin/claude-monitor help > /dev/null
-          env -i HOME=$(mktemp -d) PATH=/usr/bin XDG_RUNTIME_DIR=$(mktemp -d) \
-            ./bin/claude-monitor accounts > /dev/null
           echo "OK: CLI runs without DISPLAY/WAYLAND_DISPLAY"

@@ -17,14 +17,11 @@ type Config struct {
 	Polling       PollingConfig       `toml:"polling"`
 	Notifications NotificationsConfig `toml:"notifications"`
 	Logging       LoggingConfig       `toml:"logging"`
-	Tray          TrayConfig          `toml:"tray"`
 }
 
 type PollingConfig struct {
-	// IntervalSeconds is the base per-account polling cadence in seconds.
-	IntervalSeconds int  `toml:"interval_seconds"`
-	// Adaptive turns on adaptive throttling near limits (§5.3.3 of DESIGN.md).
-	Adaptive        bool `toml:"adaptive"`
+	// IntervalSeconds is the base polling cadence in seconds.
+	IntervalSeconds int `toml:"interval_seconds"`
 }
 
 type NotificationsConfig struct {
@@ -36,25 +33,15 @@ type LoggingConfig struct {
 	Level string `toml:"level"`
 }
 
-type TrayConfig struct {
-	// PinnedAccountID is the account org id whose usage is shown in the tray.
-	// Empty = first found.
-	PinnedAccountID string `toml:"pinned_account_id"`
-}
-
-// Default returns the v0.1.0 default configuration.
+// Default returns the default configuration.
 func Default() Config {
 	return Config{
-		Polling: PollingConfig{
-			IntervalSeconds: 600,
-			Adaptive:        true,
-		},
+		Polling: PollingConfig{IntervalSeconds: 600},
 		Notifications: NotificationsConfig{
 			Enabled:    true,
 			Thresholds: []int{75, 90, 95},
 		},
 		Logging: LoggingConfig{Level: "info"},
-		Tray:    TrayConfig{PinnedAccountID: ""},
 	}
 }
 
@@ -73,14 +60,13 @@ func Load() (Config, error) {
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		return cfg, fmt.Errorf("decode %s: %w", path, err)
 	}
-	// Defensive: enforce minimum cadence to avoid burning quota.
 	if cfg.Polling.IntervalSeconds < 60 {
 		cfg.Polling.IntervalSeconds = 60
 	}
 	return cfg, nil
 }
 
-// Save writes the configuration to disk with comments preserved as a header.
+// Save writes the configuration to disk.
 func Save(cfg Config) error {
 	if err := os.MkdirAll(filepath.Dir(xdg.ConfigPath()), 0o700); err != nil {
 		return err
@@ -98,9 +84,6 @@ func Save(cfg Config) error {
 	}
 	header := `# Claude Monitor configuration
 # https://github.com/achton/claude-monitor-linux
-#
-# Edits made here are loaded on next launch. Some keys can also be edited
-# via the GUI Settings window or the CLI.
 
 `
 	if _, err := tmp.WriteString(header); err != nil {

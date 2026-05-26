@@ -1,7 +1,7 @@
 // Package tray runs Fyne's integrated SNI tray + the polling loop + the DBus
 // service that CLI subcommands delegate to.
 //
-// Imported only from cmd/claude-monitor/tray_entry.go. See DESIGN.md §11.
+// Imported only from cmd/claude-monitor/tray_entry.go.
 package tray
 
 import (
@@ -73,23 +73,18 @@ func Run(env *cli.Env, cfg config.Config) error {
 
 	state := newState(env, a, desk, cfg)
 
-	// Initial tray icon + menu (before any polling has happened).
 	state.refreshIcon()
 	state.rebuildMenu()
 
-	// Register the DBus surface.
 	svc := &dbusService{state: state}
 	if err := conn.Export(svc, dbusPath, dbusInterface); err != nil {
 		return fmt.Errorf("dbus export: %w", err)
 	}
 
-	// Start the polling goroutine.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go state.pollLoop(ctx)
 
-	// Signal handler. a.Quit() touches Fyne state, so marshal back onto
-	// the Fyne goroutine.
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -98,8 +93,6 @@ func Run(env *cli.Env, cfg config.Config) error {
 		fyne.Do(a.Quit)
 	}()
 
-	// Block on Fyne's main event loop. This handles both the tray menu/icon
-	// (via the desktop.App integration) and any windows opened by the menu.
 	a.Run()
 	return nil
 }
@@ -118,9 +111,6 @@ func callFocus(conn *dbus.Conn) error {
 	return obj.Call(dbusInterface+".Focus", 0).Err
 }
 
-// handleNoSNI implements the §5.4 / §11 fallback policy: a one-shot
-// notification + non-zero exit when the tray was explicitly requested but no
-// SNI host is present.
 func handleNoSNI(env *cli.Env, conn *dbus.Conn) error {
 	msg := `No system tray host detected on this session bus.
 On GNOME, install the AppIndicator and KStatusNotifierItem Support extension.
@@ -151,35 +141,12 @@ func (s *dbusService) Focus() *dbus.Error {
 	return nil
 }
 
-func (s *dbusService) Poll(accountID string) (int32, string, *dbus.Error) {
-	cmlog.Logger().Info("dbus Poll requested", slog.String("account", accountID))
-	if accountID == "" {
-		n, err := s.state.env.Poller.PollAll(s.state.ctx)
-		if err != nil {
-			return int32(n), err.Error(), nil
-		}
-		return int32(n), "", nil
-	}
-	if err := s.state.env.Poller.PollAccount(s.state.ctx, accountID); err != nil {
+func (s *dbusService) Poll() (int32, string, *dbus.Error) {
+	cmlog.Logger().Info("dbus Poll requested")
+	if err := s.state.env.Poller.PollNow(s.state.ctx); err != nil {
 		return 0, err.Error(), nil
 	}
 	return 1, "", nil
-}
-
-func (s *dbusService) Probe(accountID string) (string, string, *dbus.Error) {
-	creds, err := s.state.env.Store.ListActiveCredentials(s.state.ctx)
-	if err != nil {
-		return "", err.Error(), nil
-	}
-	for _, c := range creds {
-		if c.AccountID.Valid && c.AccountID.String == accountID {
-			if err := s.state.env.Store.ResetCredentialEndpointState(s.state.ctx, c.ID); err != nil {
-				return c.UsageEndpointState, err.Error(), nil
-			}
-			return "healthy", "", nil
-		}
-	}
-	return "", "no credential for account", nil
 }
 
 // ----- shared tray state -----
@@ -200,26 +167,25 @@ func newState(env *cli.Env, app fyne.App, desk desktop.App, cfg config.Config) *
 }
 
 func (st *state) pollLoop(ctx context.Context) {
-	// Start the fsnotify watcher on Claude Code's credentials file. Silently
-	// skips when Claude Code isn't installed; paste-only users see the same
-	// behavior as before.
-	st.env.Poller.StartCredentialsWatcher(ctx)
-
-	if _, err := st.env.Poller.PollAll(ctx); err != nil {
+	if err := st.env.Poller.PollNow(ctx); err != nil {
 		cmlog.Logger().Warn("initial poll", slog.String("err", err.Error()))
 	}
 	st.refreshIcon()
 	st.rebuildMenu()
 
-	tick := time.NewTicker(30 * time.Second)
+	interval := time.Duration(st.cfg.Polling.IntervalSeconds) * time.Second
+	if interval < time.Minute {
+		interval = time.Minute
+	}
+	tick := time.NewTicker(interval)
 	defer tick.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			if _, err := st.env.Poller.PollDue(ctx); err != nil {
-				cmlog.Logger().Warn("pollDue", slog.String("err", err.Error()))
+			if err := st.env.Poller.PollNow(ctx); err != nil {
+				cmlog.Logger().Warn("poll", slog.String("err", err.Error()))
 			}
 			st.refreshIcon()
 			st.rebuildMenu()
@@ -228,8 +194,6 @@ func (st *state) pollLoop(ctx context.Context) {
 }
 
 func (st *state) focusAccountList() {
-	// Menu callbacks fire on a non-UI goroutine. All window construction
-	// and mutation must hop onto the Fyne goroutine via fyne.Do.
 	fyne.Do(func() {
 		st.winMu.Lock()
 		w := st.accountListWindow
@@ -249,21 +213,5 @@ func (st *state) focusAccountList() {
 			st.winMu.Unlock()
 		})
 		nw.Show()
-	})
-}
-
-// openAddAccount opens the add-account window directly from the tray menu.
-func (st *state) openAddAccount() {
-	fyne.Do(func() {
-		w := ui.NewAddAccountWindow(st.app, st.env, func() {
-			st.winMu.Lock()
-			if st.accountListWindow != nil {
-				st.accountListWindow.Content().Refresh()
-			}
-			st.winMu.Unlock()
-			st.rebuildMenu()
-			st.refreshIcon()
-		})
-		w.Show()
 	})
 }

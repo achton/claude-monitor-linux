@@ -42,7 +42,6 @@ lint: vet
 headless-test: $(BIN)
 	@echo "Running CLI under env -i (no DISPLAY/WAYLAND)..."
 	@env -i HOME=$$(mktemp -d) PATH=/usr/bin XDG_RUNTIME_DIR=$$(mktemp -d) $(BIN) version
-	@env -i HOME=$$(mktemp -d) PATH=/usr/bin XDG_RUNTIME_DIR=$$(mktemp -d) $(BIN) accounts >/dev/null
 	@echo "OK: CLI runs with no display."
 
 .PHONY: icons

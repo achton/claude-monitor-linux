@@ -16,9 +16,9 @@ import (
 )
 
 // NewSettingsWindow returns a small window for adjusting persistent prefs.
-func NewSettingsWindow(app fyne.App, env *cli.Env, onChange func()) fyne.Window {
+func NewSettingsWindow(app fyne.App, _ *cli.Env, onChange func()) fyne.Window {
 	w := app.NewWindow("Claude Monitor — Settings")
-	w.Resize(fyne.NewSize(480, 360))
+	w.Resize(fyne.NewSize(480, 320))
 
 	cfg, _ := config.Load()
 
@@ -48,12 +48,6 @@ func NewSettingsWindow(app fyne.App, env *cli.Env, onChange func()) fyne.Window 
 		}
 	}
 
-	adaptive := widget.NewCheck("Adaptive throttling near limits", func(v bool) {
-		cfg.Polling.Adaptive = v
-		_ = config.Save(cfg)
-	})
-	adaptive.SetChecked(cfg.Polling.Adaptive)
-
 	autostart := widget.NewCheck("Start automatically at login", nil)
 	autostart.SetChecked(autostartExists())
 	autostart.OnChanged = func(v bool) {
@@ -71,7 +65,6 @@ func NewSettingsWindow(app fyne.App, env *cli.Env, onChange func()) fyne.Window 
 		widget.NewFormItem("Notifications", notifEnabled),
 		widget.NewFormItem("Thresholds (%, comma)", thresholds),
 		widget.NewFormItem("Poll interval (s)", pollEntry),
-		widget.NewFormItem("Adaptive throttling", adaptive),
 		widget.NewFormItem("Autostart", autostart),
 	)
 

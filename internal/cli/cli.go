@@ -1,10 +1,7 @@
 // Package cli implements the subcommand handlers for claude-monitor.
 //
-// All handlers operate against the SQLite store and (for poll/probe) the
-// Anthropic API client + the running tray's D-Bus surface when present.
-//
 // This package must remain GUI-free — it is imported by the bare-CLI dispatch
-// path and must not pull fyne/systray side effects. See docs/DESIGN.md §11.
+// path and must not pull fyne/systray side effects.
 package cli
 
 import (
@@ -34,24 +31,8 @@ func Run(env *Env, name string, args []string) int {
 	switch name {
 	case "status":
 		return Status(env, args)
-	case "accounts":
-		return Accounts(env, args)
-	case "add-token":
-		return AddToken(env, args)
-	case "import-env":
-		return ImportEnv(env, args)
-	case "import-claude-code":
-		return ImportClaudeCode(env, args)
-	case "remove":
-		return Remove(env, args)
 	case "poll":
 		return Poll(env, args)
-	case "pin":
-		return Pin(env, args)
-	case "unpin":
-		return Unpin(env, args)
-	case "probe":
-		return Probe(env, args)
 	case "version":
 		return Version(env, args)
 	case "help", "-h", "--help":
@@ -71,24 +52,13 @@ USAGE
     claude-monitor                 Launch tray (default; blocking)
     claude-monitor tray [--detach] Launch tray; --detach forks and returns
     claude-monitor status [opts]   Print current usage
-    claude-monitor accounts        List accounts
-    claude-monitor add-token TOK   Add an account by access token
-    claude-monitor import-env FILE Import ACCOUNT_EMAIL_N/KEY_N pairs from .env
-    claude-monitor import-claude-code
-                                   Import the active token from
-                                   ~/.claude/.credentials.json (Claude Code)
-    claude-monitor remove NAME     Remove an account
-    claude-monitor poll [opts]     Force a poll cycle
-    claude-monitor pin NAME        Pin an account to the tray badge
-    claude-monitor unpin           Clear the tray pin
-    claude-monitor probe [opts]    Re-test /api/oauth/usage state
+    claude-monitor poll            Force a poll cycle
     claude-monitor version         Print version
-    claude-monitor help [CMD]      Show help
+    claude-monitor help            Show help
 
 STATUS OPTIONS
-    --account NAME                 Specific account (else: pinned or first)
     --json                         Machine-readable JSON
-    --format TEMPLATE              Go template string (see man page)
+    --format TEMPLATE              Go template string
     --quiet                        No output; exit code only
 
 EXIT CODES (status)
@@ -98,12 +68,13 @@ EXIT CODES (status)
     30  >= 95%% (critical)
     1   error (no data, network)
 
-See docs/DESIGN.md or the man page for details.
+Authentication is read live from ~/.claude/.credentials.json on every poll.
+Run `+"`claude /login`"+` (Claude Code) if you see an unauthorized error.
 `)
 	return 0
 }
 
-// AppVersion is set at link time via -ldflags "-X 'github.com/achton/claude-monitor-linux/internal/cli.AppVersion=0.1.0'".
+// AppVersion is set at link time via -ldflags.
 var AppVersion = "0.1.0-dev"
 
 // Version prints the binary version.

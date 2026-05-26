@@ -6,9 +6,10 @@ require (
 	fyne.io/fyne/v2 v2.7.4
 	fyne.io/systray v1.12.1
 	github.com/BurntSushi/toml v1.6.0
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/wcharczuk/go-chart/v2 v2.1.2
-	golang.org/x/sys v0.44.0
+	golang.org/x/sys v0.45.0
 	modernc.org/sqlite v1.50.1
 )
 
@@ -16,7 +17,6 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fredbi/uri v1.1.1 // indirect
-	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/fyne-io/gl-js v0.2.0 // indirect
 	github.com/fyne-io/glfw-js v0.3.0 // indirect
 	github.com/fyne-io/image v0.1.1 // indirect

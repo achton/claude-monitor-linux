@@ -1,13 +1,17 @@
 name: Release
 
-# Two ways to trigger:
+# Three ways to trigger:
 #   1. Push a vX.Y.Z tag (manual `git tag && git push --tags`).
 #   2. Click "Run workflow" in the Actions UI and pick patch/minor/major.
 #      That path computes the next semver from the latest tag, creates the
 #      tag, pushes it, and runs the same build/release path.
+#   3. Publish a release in the GitHub UI. Useful when the `push: tags`
+#      event misfires (e.g. Actions outage, tag created via UI release flow).
 on:
   push:
     tags: ['v*.*.*']
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       bump:
@@ -77,13 +81,15 @@ jobs:
 
   release:
     needs: [tag]
-    # Run on either:
+    # Run on any of:
     #   - tag push (the `tag` job was skipped — its result is "skipped")
+    #   - release published in the UI (also skipped `tag`)
     #   - manual dispatch (the `tag` job succeeded)
     # `always()` is the canonical workaround for an OR condition with `needs`.
     if: |
       always() && (
         github.event_name == 'push' ||
+        github.event_name == 'release' ||
         (github.event_name == 'workflow_dispatch' && needs.tag.result == 'success')
       )
     runs-on: ubuntu-22.04

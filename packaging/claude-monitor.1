@@ -1,4 +1,4 @@
-.TH CLAUDE-MONITOR 1 "2026-05-21" "claude-monitor 0.1.0" "User Commands"
+.TH CLAUDE-MONITOR 1 "2026-05-26" "claude-monitor 0.1.6" "User Commands"
 .SH NAME
 claude-monitor \- Linux usage widget and CLI for Claude AI subscriptions
 .SH SYNOPSIS
@@ -7,47 +7,35 @@ claude-monitor \- Linux usage widget and CLI for Claude AI subscriptions
 .SH DESCRIPTION
 .B claude-monitor
 tracks Claude AI subscription usage (session 5-hour and weekly 7-day quotas)
-and displays the current utilization in your system tray. A CLI surface
-mirrors every tray action so you can integrate with waybar, polybar, tmux,
-shell prompts, and scripts.
+and displays the current utilization in your system tray. A CLI surface lets
+you query the same data for waybar, polybar, tmux, shell prompts, and scripts.
+
+The app is a companion to Claude Code. On every poll it reads the live OAuth
+access token from \fI~/.claude/.credentials.json\fR and calls Anthropic's
+\fI/api/oauth/usage\fR endpoint. It does not store credentials, manage logins,
+or support multiple accounts \(em those are Claude Code's responsibility. To
+switch the active account, run \fIclaude /login\fR.
 
 Bare invocation launches the tray. Use subcommands for non-GUI access.
 
 .SH SUBCOMMANDS
 .TP
-\fBtray\fR
-Launch the system tray (default if no subcommand given).
+\fBtray\fR [\fB--detach\fR]
+Launch the system tray (default if no subcommand given). \fB--detach\fR forks
+a new session and returns immediately so the parent shell isn't blocked.
 .TP
-\fBstatus\fR [\fB--account\fR \fINAME\fR] [\fB--json\fR | \fB--format\fR \fITPL\fR | \fB--quiet\fR]
-Print current usage for one account.
+\fBstatus\fR [\fB--json\fR | \fB--format\fR \fITPL\fR | \fB--quiet\fR]
+Print the latest usage reading.
 .TP
-\fBaccounts\fR [\fB--json\fR]
-List all configured accounts.
-.TP
-\fBadd-token\fR [\fITOKEN\fR] [\fB--email\fR \fIEMAIL\fR]
-Add a Claude account by OAuth access token. Reads from stdin if no argument.
-.TP
-\fBimport-env\fR \fIFILE\fR
-Import ACCOUNT_EMAIL_N and ACCOUNT_KEY_N pairs from a .env file.
-.TP
-\fBremove\fR \fINAME\fR
-Remove an account and its usage history.
-.TP
-\fBpoll\fR [\fB--account\fR \fINAME\fR]
-Force a poll cycle. Delegates to the running tray via D-Bus when possible.
-.TP
-\fBpin\fR \fINAME\fR
-Pin an account to drive the tray badge percentage.
-.TP
-\fBunpin\fR
-Clear the tray pin (falls back to first-found account).
-.TP
-\fBprobe\fR [\fB--account\fR \fINAME\fR]
-Reset the OAuth Usage endpoint state machine back to \(lqhealthy\(rq and
-attempt one poll. Use after a long backoff.
+\fBpoll\fR
+Force a poll cycle. Delegates to the running tray via D-Bus when possible,
+falling back to an in-process poll otherwise.
 .TP
 \fBversion\fR
 Print the binary version and exit.
+.TP
+\fBhelp\fR
+Print top-level help.
 
 .SH STATUS OUTPUT FORMATS
 .TP
@@ -77,26 +65,31 @@ At or above 90% (warning).
 At or above 95% (critical).
 .TP
 1
-Error: no data, network failure, etc.
+Error: no data, network failure, no Claude Code credentials file, etc.
 
 .SH FILES
 .TP
+\fI~/.claude/.credentials.json\fR
+Claude Code's OAuth credentials file. Read on every poll. Not modified by
+claude-monitor.
+.TP
 \fI~/.local/share/claude-monitor/usage.db\fR
-SQLite database (WAL). Permissions enforced at 0600 / 0700.
+SQLite database (WAL). Holds only the usage history timeline. Permissions
+enforced at 0600 / 0700.
 .TP
 \fI~/.config/claude-monitor/config.toml\fR
 TOML configuration. Auto-created on first run.
 .TP
 \fI~/.local/state/claude-monitor/debug.log\fR
-Rolling log file (slog JSON). Rotated at 5 MB.
+Rolling slog JSON log.
 .TP
 \fI~/.config/autostart/claude-monitor.desktop\fR
-Autostart entry; presence controlled by the Settings window or by the user.
+Autostart entry; presence controlled by the Settings window.
 
 .SH EXAMPLES
 .TP
-Add an account from stdin
-\fIecho "$TOKEN" | claude-monitor add-token\fR
+Launch the tray detached
+\fIclaude-monitor tray --detach\fR
 .TP
 Waybar custom module
 \fI{"custom/claude": {"exec": "claude-monitor status --format='{{.PrimaryPercent}}%%'", "interval": 60}}\fR
@@ -104,7 +97,7 @@ Waybar custom module
 tmux right-status
 \fIset -g status-right '#(claude-monitor status --format=\(dq{{.PrimaryPercent}}%%\(dq)'\fR
 .TP
-Shell warning above 90%
+Shell warning above 75%
 \fIif ! claude-monitor status --quiet; then echo "Claude usage high!"; fi\fR
 
 .SH SEE ALSO

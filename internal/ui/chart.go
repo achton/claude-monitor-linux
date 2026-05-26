@@ -19,13 +19,10 @@ import (
 	"github.com/achton/claude-monitor-linux/internal/store"
 )
 
-// NewChartPane returns a chart widget for the given account, suitable for
-// embedding directly inside the main dashboard. The pane includes its own
-// 24h/7d/30d range buttons.
-func NewChartPane(env *cli.Env, a store.Account, minSize fyne.Size) fyne.CanvasObject {
+// NewChartPane returns a chart widget for the single account.
+func NewChartPane(env *cli.Env, minSize fyne.Size) fyne.CanvasObject {
 	current := 7 * 24 * time.Hour
 
-	// Default chart canvas size to whatever the pane is asked to occupy.
 	cw, chh := int(minSize.Width), int(minSize.Height)
 	if cw < 360 {
 		cw = 360
@@ -39,7 +36,7 @@ func NewChartPane(env *cli.Env, a store.Account, minSize fyne.Size) fyne.CanvasO
 	img.SetMinSize(fyne.NewSize(float32(cw), float32(chh)))
 
 	redraw := func() {
-		rec, err := env.Store.UsageRange(env.Ctx, a.ID, time.Now().Add(-current))
+		rec, err := env.Store.UsageRange(env.Ctx, time.Now().Add(-current))
 		if err != nil || len(rec) == 0 {
 			img.Image = blankImage(cw, chh)
 			img.Refresh()
@@ -62,15 +59,6 @@ func NewChartPane(env *cli.Env, a store.Account, minSize fyne.Size) fyne.CanvasO
 	return container.NewBorder(header, nil, nil, nil, img)
 }
 
-// NewChartWindow remains for one-off "pop the chart out" use. The dashboard
-// embeds the same pane via NewChartPane.
-func NewChartWindow(app fyne.App, env *cli.Env, a store.Account) fyne.Window {
-	w := app.NewWindow("Chart — " + a.DisplayName())
-	w.Resize(fyne.NewSize(720, 480))
-	w.SetContent(NewChartPane(env, a, fyne.NewSize(700, 360)))
-	return w
-}
-
 func renderChart(rows []store.UsageRecord, window time.Duration, cw, chh int) image.Image {
 	var times []time.Time
 	var weekly []float64
@@ -78,8 +66,8 @@ func renderChart(rows []store.UsageRecord, window time.Duration, cw, chh int) im
 	var resetMarkers []time.Time
 	for _, r := range rows {
 		times = append(times, r.Timestamp)
-		if r.WeeklyAllPercent.Valid {
-			weekly = append(weekly, r.WeeklyAllPercent.Float64)
+		if r.WeeklyPercent.Valid {
+			weekly = append(weekly, r.WeeklyPercent.Float64)
 		} else {
 			weekly = append(weekly, 0)
 		}

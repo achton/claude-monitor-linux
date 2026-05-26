@@ -1,9 +1,9 @@
-// Package ui implements Fyne windows used by the tray.
+// Package ui implements the dashboard window.
 //
 // Constructors take an existing fyne.App; they never call app.New(). This is
-// part of the headless-CLI safety invariant (DESIGN.md §11): even if ui is
-// imported from a non-tray path, no fyne side effects fire until the tray
-// itself constructs the App.
+// part of the headless-CLI safety invariant: even if ui is imported from a
+// non-tray path, no fyne side effects fire until the tray itself constructs
+// the App.
 package ui
 
 import (
@@ -20,13 +20,9 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/achton/claude-monitor-linux/internal/cli"
-	"github.com/achton/claude-monitor-linux/internal/store"
 )
 
-// NewAccountListWindow builds the main dashboard. Despite the name (kept for
-// call-site stability), it is a single-account dense view with an inline
-// history chart; multi-account switching is a side path that only surfaces
-// when there are >= 2 accounts.
+// NewAccountListWindow builds the dashboard. Name kept for call-site stability.
 func NewAccountListWindow(app fyne.App, env *cli.Env) fyne.Window {
 	w := app.NewWindow("Claude Monitor")
 	w.Resize(fyne.NewSize(560, 640))
@@ -35,23 +31,9 @@ func NewAccountListWindow(app fyne.App, env *cli.Env) fyne.Window {
 
 	var refresh func()
 	refresh = func() {
-		// All UI mutations must run on the Fyne goroutine. fyne.Do is a
-		// no-op when already on that goroutine, so calling this from both
-		// UI-thread and goroutine callers is safe.
 		fyne.Do(func() {
 			body.RemoveAll()
-			accs, err := env.Store.ListAccounts(env.Ctx)
-			if err != nil {
-				body.Add(widget.NewLabel("Error: " + err.Error()))
-				return
-			}
-			if len(accs) == 0 {
-				body.Add(buildEmptyState(app, env, refresh))
-				return
-			}
-			pin := env.Store.GetSettingDefault(env.Ctx, "tray_pinned_account", "")
-			active := pickActiveAccount(accs, pin)
-			body.Add(buildDashboard(app, env, active, accs, refresh))
+			body.Add(buildDashboard(app, env, refresh))
 		})
 	}
 	refresh()
@@ -59,7 +41,7 @@ func NewAccountListWindow(app fyne.App, env *cli.Env) fyne.Window {
 	footer := container.NewHBox(
 		widget.NewButton("Refresh", func() {
 			go func() {
-				_, _ = env.Poller.PollAll(env.Ctx)
+				_ = env.Poller.PollNow(env.Ctx)
 				refresh()
 			}()
 		}),
@@ -71,82 +53,45 @@ func NewAccountListWindow(app fyne.App, env *cli.Env) fyne.Window {
 	return w
 }
 
-func pickActiveAccount(accs []store.Account, pinID string) store.Account {
-	if pinID != "" {
-		for _, a := range accs {
-			if a.ID == pinID {
-				return a
-			}
-		}
+// buildDashboard renders the single-account view.
+func buildDashboard(app fyne.App, env *cli.Env, refresh func()) fyne.CanvasObject {
+	rec, recErr := env.Store.LatestUsage(env.Ctx)
+	label, lastErr, _, _ := env.Poller.Status()
+	if label == "" {
+		label = "Claude Code"
 	}
-	return accs[0]
-}
 
-// buildDashboard renders the dense single-account view.
-func buildDashboard(app fyne.App, env *cli.Env, active store.Account, all []store.Account, refresh func()) fyne.CanvasObject {
-	rec, _ := env.Store.LatestUsage(env.Ctx, active.ID)
 	sessionPct := valOrZero(rec.SessionPercent)
-	weeklyPct := valOrZero(rec.WeeklyAllPercent)
+	weeklyPct := valOrZero(rec.WeeklyPercent)
 	sessionReset := parseISOOrZero(rec.SessionReset)
 	weeklyReset := parseISOOrZero(rec.WeeklyReset)
 
-	cred, _ := env.Store.GetCredentialByAccountID(env.Ctx, active.ID)
-
 	parts := []fyne.CanvasObject{}
 
-	// Polling-health banner — only when we have a real last_error.
-	if cred.LastError.Valid && cred.LastError.String != "" {
-		parts = append(parts, buildPollErrorBanner(app, env, active, cred, rec, refresh))
+	if lastErr != "" {
+		parts = append(parts, buildPollErrorBanner(env, lastErr, rec.Timestamp, refresh))
 	}
 
-	// Multi-account selector — only when relevant.
-	if len(all) > 1 {
-		names := make([]string, 0, len(all))
-		byName := map[string]string{}
-		for _, a := range all {
-			names = append(names, a.DisplayName())
-			byName[a.DisplayName()] = a.ID
-		}
-		sel := widget.NewSelect(names, func(name string) {
-			if id, ok := byName[name]; ok {
-				v := id
-				_ = env.Store.SetSetting(env.Ctx, "tray_pinned_account", &v)
-				refresh()
-			}
-		})
-		sel.SetSelected(active.DisplayName())
-		parts = append(parts,
-			container.NewBorder(nil, nil, widget.NewLabel("Account"), nil, sel),
-			widget.NewSeparator(),
-		)
+	name := widget.NewLabelWithStyle(label,
+		fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	parts = append(parts, name)
+
+	if recErr != nil {
+		parts = append(parts, widget.NewLabel("Waiting for the first successful poll…"))
 	} else {
-		// Single-account: a discreet name header instead of the selector.
-		name := widget.NewLabelWithStyle(active.DisplayName(),
-			fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-		parts = append(parts, name)
+		parts = append(parts,
+			buildMetricBlock("Session (5h)", sessionPct, sessionReset),
+			buildMetricBlock("Weekly (7d)", weeklyPct, weeklyReset),
+		)
 	}
 
-	parts = append(parts,
-		buildMetricBlock("Session (5h)", sessionPct, sessionReset),
-		buildMetricBlock("Weekly (7d)", weeklyPct, weeklyReset),
-	)
-
-	// Inline history chart — directly inside the dashboard, no separate window.
-	parts = append(parts, NewChartPane(env, active, fyne.NewSize(520, 220)))
-
-	renameBtn := widget.NewButton("✏ Rename", func() {
-		showRenameDialog(app, env, active)
-	})
-	addBtn := widget.NewButton("➕ Add another account", func() {
-		NewAddAccountWindow(app, env, refresh).Show()
-	})
-	parts = append(parts, container.NewHBox(renameBtn, addBtn))
+	parts = append(parts, NewChartPane(env, fyne.NewSize(520, 220)))
 
 	return container.NewVBox(parts...)
 }
 
-// buildMetricBlock renders one dimension (session or weekly) — a big % number,
-// a label + reset countdown to the right, then the bar below.
+// buildMetricBlock renders one dimension — a big % number, a label + reset
+// countdown to the right, then the bar below.
 func buildMetricBlock(title string, pct float64, reset time.Time) fyne.CanvasObject {
 	big := canvas.NewText(fmt.Sprintf("%.0f%%", pct), theme.ForegroundColor())
 	big.TextSize = 36
@@ -161,21 +106,10 @@ func buildMetricBlock(title string, pct float64, reset time.Time) fyne.CanvasObj
 	return container.NewVBox(row, newProgressBar(pct), widget.NewSeparator())
 }
 
-func buildEmptyState(app fyne.App, env *cli.Env, refresh func()) fyne.CanvasObject {
-	headline := widget.NewLabelWithStyle("No Claude account yet",
-		fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
-	hint := widget.NewLabel("Add one to start tracking quota usage.")
-	addBtn := widget.NewButton("Add account…", func() {
-		NewAddAccountWindow(app, env, refresh).Show()
-	})
-	return container.NewVBox(headline, hint, addBtn)
-}
-
 // newProgressBar creates a colored horizontal progress bar at the given %.
-// Custom layout (no HBox-in-Stack) — see fix in v0.1.2.
 func newProgressBar(pct float64) fyne.CanvasObject {
 	const h float32 = 10
-	bg := canvas.NewRectangle(color.NRGBA{R: 0xB0, G: 0xAE, B: 0xA5, A: 0x40}) // Mid Gray @ 25%
+	bg := canvas.NewRectangle(color.NRGBA{R: 0xB0, G: 0xAE, B: 0xA5, A: 0x40})
 	fill := canvas.NewRectangle(colorForPct(pct))
 	frac := math.Max(0, math.Min(1, pct/100))
 	return container.New(&progressBarLayout{frac: frac, height: h}, bg, fill)
@@ -205,11 +139,11 @@ func (l *progressBarLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) 
 func colorForPct(pct float64) color.Color {
 	switch {
 	case pct >= 95:
-		return color.NRGBA{R: 0xC0, G: 0x3A, B: 0x24, A: 0xFF} // critical
+		return color.NRGBA{R: 0xC0, G: 0x3A, B: 0x24, A: 0xFF}
 	case pct >= 90:
-		return color.NRGBA{R: 0xD9, G: 0x77, B: 0x57, A: 0xFF} // Claude orange
+		return color.NRGBA{R: 0xD9, G: 0x77, B: 0x57, A: 0xFF}
 	default:
-		return color.NRGBA{R: 0x78, G: 0x8C, B: 0x5D, A: 0xFF} // Anthropic Green
+		return color.NRGBA{R: 0x78, G: 0x8C, B: 0x5D, A: 0xFF}
 	}
 }
 
@@ -250,9 +184,8 @@ func parseISOOrZero(s sql.NullString) time.Time {
 }
 
 // buildPollErrorBanner renders the warning surface shown above the dashboard
-// metrics when the active credential's most recent poll failed. The numbers
-// below are stale — be honest about it.
-func buildPollErrorBanner(app fyne.App, env *cli.Env, active store.Account, cred store.Credential, rec store.UsageRecord, refresh func()) fyne.CanvasObject {
+// metrics when the latest poll failed.
+func buildPollErrorBanner(env *cli.Env, lastErr string, lastTimestamp time.Time, refresh func()) fyne.CanvasObject {
 	bg := canvas.NewRectangle(color.NRGBA{R: 0xC0, G: 0x3A, B: 0x24, A: 0x33})
 	bg.StrokeColor = color.NRGBA{R: 0xC0, G: 0x3A, B: 0x24, A: 0xCC}
 	bg.StrokeWidth = 1
@@ -261,42 +194,23 @@ func buildPollErrorBanner(app fyne.App, env *cli.Env, active store.Account, cred
 		fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
 	lastGood := "last successful poll: never"
-	if !rec.Timestamp.IsZero() {
+	if !lastTimestamp.IsZero() {
 		lastGood = fmt.Sprintf("last successful poll %s ago",
-			compactDuration(time.Since(rec.Timestamp)))
+			compactDuration(time.Since(lastTimestamp)))
 	}
-	body := fmt.Sprintf("%s\n%s", cred.LastError.String, lastGood)
-	if cred.Source != "claude-code" {
-		// Paste-only / env-imported account: there is no auto-refresh path.
-		// Tell the user instead of leaving them to guess why no Re-import
-		// button is offered.
-		body += "\n\nThis account was added without Claude Code. Auto-refresh\n" +
-			"isn't available — run `claude-monitor add-token` (or\n" +
-			"`import-claude-code` if Claude Code is installed) with a fresh\n" +
-			"token to recover."
-	}
+	body := fmt.Sprintf("%s\n%s\n\nIf this is a token problem, run `claude /login` in a terminal.",
+		lastErr, lastGood)
 	detail := widget.NewLabel(body)
 	detail.Wrapping = fyne.TextWrapWord
 
-	actions := []fyne.CanvasObject{}
-	if cred.Source == "claude-code" {
-		actions = append(actions, widget.NewButton("Re-import token", func() {
-			go func() {
-				if _, err := env.Poller.ImportFromClaudeCode(env.Ctx, ""); err == nil {
-					_ = env.Poller.PollAccount(env.Ctx, active.ID)
-				}
-				refresh()
-			}()
-		}))
-	}
-	actions = append(actions, widget.NewButton("Retry now", func() {
+	retry := widget.NewButton("Retry now", func() {
 		go func() {
-			_, _ = env.Poller.PollAll(env.Ctx)
+			_ = env.Poller.PollNow(env.Ctx)
 			refresh()
 		}()
-	}))
+	})
 
-	inner := container.NewVBox(title, detail, container.NewHBox(actions...))
+	inner := container.NewVBox(title, detail, container.NewHBox(retry))
 	padded := container.NewPadded(inner)
 	return container.NewStack(bg, padded)
 }

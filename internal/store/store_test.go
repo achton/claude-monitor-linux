@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestSchemaAndUpsert(t *testing.T) {
+func TestUsageInsertAndLatest(t *testing.T) {
 	ctx := context.Background()
 	s, err := OpenInMemory()
 	if err != nil {
@@ -14,39 +14,21 @@ func TestSchemaAndUpsert(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := s.UpsertAccount(ctx, nil, "org-1", "label", "a@b", "Max"); err != nil {
+	if err := s.InsertUsageReading(ctx, nil, 23, 50, 0, "", "", `{"x":1}`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpsertAccount(ctx, nil, "org-1", "label", "a@b", "Max"); err != nil {
-		t.Fatal(err)
-	}
-
-	accs, err := s.ListAccounts(ctx)
+	got, err := s.LatestUsage(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(accs) != 1 {
-		t.Fatalf("want 1 account, got %d", len(accs))
+	if got.SessionPercent.Float64 != 23 {
+		t.Errorf("session: got %v", got.SessionPercent.Float64)
 	}
-	if accs[0].DisplayName() != "label" {
-		t.Errorf("display name: got %q", accs[0].DisplayName())
+	if got.WeeklyPercent.Float64 != 50 {
+		t.Errorf("weekly: got %v", got.WeeklyPercent.Float64)
 	}
-}
-
-func TestUsageInsertAndLatest(t *testing.T) {
-	ctx := context.Background()
-	s, _ := OpenInMemory()
-	defer s.Close()
-	_ = s.UpsertAccount(ctx, nil, "org-1", "lbl", "", "")
-	if err := s.InsertUsageReading(ctx, nil, "org-1", 50, 23, 50, 0, "", "", `{"x":1}`, "oauth_usage"); err != nil {
-		t.Fatal(err)
-	}
-	got, err := s.LatestUsage(ctx, "org-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.PrimaryPercent.Float64 != 50 {
-		t.Errorf("primary: got %v", got.PrimaryPercent.Float64)
+	if got.PrimaryPercent() != 50 {
+		t.Errorf("primary: got %v", got.PrimaryPercent())
 	}
 }
 
@@ -54,13 +36,12 @@ func TestNotificationLogDebounce(t *testing.T) {
 	ctx := context.Background()
 	s, _ := OpenInMemory()
 	defer s.Close()
-	_ = s.UpsertAccount(ctx, nil, "org-1", "lbl", "", "")
 	reset := time.Now().Add(2 * time.Hour)
-	fired, err := s.MarkNotificationFired(ctx, "org-1", "weekly", 90, reset)
+	fired, err := s.MarkNotificationFired(ctx, "weekly", 90, reset)
 	if err != nil || !fired {
 		t.Fatalf("first fire: %v %v", fired, err)
 	}
-	fired, err = s.MarkNotificationFired(ctx, "org-1", "weekly", 90, reset)
+	fired, err = s.MarkNotificationFired(ctx, "weekly", 90, reset)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,11 +54,10 @@ func TestSyntheticIdempotency(t *testing.T) {
 	ctx := context.Background()
 	s, _ := OpenInMemory()
 	defer s.Close()
-	_ = s.UpsertAccount(ctx, nil, "org-1", "lbl", "", "")
-	if err := s.InsertSyntheticUsage(ctx, nil, "org-1", time.Now(), 80, 0, 80, 0); err != nil {
+	if err := s.InsertSyntheticUsage(ctx, nil, time.Now(), 0, 80, 0); err != nil {
 		t.Fatal(err)
 	}
-	yes, err := s.HasRecentSynthetic(ctx, nil, "org-1", time.Minute)
+	yes, err := s.HasRecentSynthetic(ctx, nil, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

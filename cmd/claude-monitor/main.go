@@ -79,7 +79,7 @@ func main() {
 	if !cfg.Notifications.Enabled {
 		ev = nil
 	}
-	pl := poller.New(s, apiClient, ev, cfg.Polling.IntervalSeconds, cfg.Polling.Adaptive)
+	pl := poller.New(s, apiClient, ev)
 
 	env := &cli.Env{
 		Ctx:    context.Background(),

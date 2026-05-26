@@ -8,8 +8,7 @@ import (
 )
 
 // rebuildMenu re-creates the system tray menu and applies it via the desktop.App
-// integration. Kept deliberately small — multi-account complexity lives in
-// the GUI Settings → Manage accounts dialog, not inline here.
+// integration.
 //
 // Callable from any goroutine — SetSystemTrayMenu is marshalled onto the
 // Fyne goroutine via fyne.Do.
@@ -22,7 +21,6 @@ func (st *state) rebuildMenu() {
 		fyne.NewMenuItem("Open Claude Monitor", st.focusAccountList),
 	}
 
-	// One-line read-only status header, when we have data.
 	if line := st.currentStatusLine(); line != "" {
 		header := fyne.NewMenuItem(line, nil)
 		header.Disabled = true
@@ -35,12 +33,11 @@ func (st *state) rebuildMenu() {
 			go func() {
 				ctx, cancel := context.WithTimeout(st.ctx, 30*1e9)
 				defer cancel()
-				_, _ = st.env.Poller.PollAll(ctx)
+				_ = st.env.Poller.PollNow(ctx)
 				st.refreshIcon()
 				st.rebuildMenu()
 			}()
 		}),
-		fyne.NewMenuItem("Add account…", st.openAddAccount),
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Quit Claude Monitor", func() {
 			fyne.Do(st.app.Quit)
@@ -55,24 +52,10 @@ func (st *state) rebuildMenu() {
 
 // currentStatusLine returns a short human-readable summary of the active
 // account's usage for the tray menu header. Returns "" when there is no data.
-// Appends a "· ⚠ stale" suffix when the active credential's last poll failed.
+// Appends a "· ⚠ stale" suffix when the latest poll failed.
 func (st *state) currentStatusLine() string {
-	accs, _ := st.env.Store.ListAccounts(st.ctx)
-	if len(accs) == 0 {
-		return ""
-	}
-	pin := st.env.Store.GetSettingDefault(st.ctx, "tray_pinned_account", "")
-	target := accs[0]
-	if pin != "" {
-		for _, a := range accs {
-			if a.ID == pin {
-				target = a
-				break
-			}
-		}
-	}
-	rec, err := st.env.Store.LatestUsage(st.ctx, target.ID)
-	if err != nil || !rec.PrimaryPercent.Valid {
+	rec, err := st.env.Store.LatestUsage(st.ctx)
+	if err != nil {
 		return ""
 	}
 	sess := 0
@@ -80,13 +63,13 @@ func (st *state) currentStatusLine() string {
 	if rec.SessionPercent.Valid {
 		sess = int(rec.SessionPercent.Float64 + 0.5)
 	}
-	if rec.WeeklyAllPercent.Valid {
-		weekly = int(rec.WeeklyAllPercent.Float64 + 0.5)
+	if rec.WeeklyPercent.Valid {
+		weekly = int(rec.WeeklyPercent.Float64 + 0.5)
 	}
 	line := fmt.Sprintf("Session %d%%   ·   Weekly %d%%", sess, weekly)
 
-	cred, err := st.env.Store.GetCredentialByAccountID(st.ctx, target.ID)
-	if err == nil && cred.LastError.Valid && cred.LastError.String != "" {
+	_, lastErr, _, _ := st.env.Poller.Status()
+	if lastErr != "" {
 		line += "   ·   ⚠ stale"
 	}
 	return line

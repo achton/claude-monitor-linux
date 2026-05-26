@@ -39,30 +39,42 @@ func OpenInMemory() (*Store, error) {
 func openAt(path string) (*Store, error) {
 	dsn := path
 	if path != ":memory:" {
-		// Pre-create the file with mode 0600 so SQLite doesn't inherit umask
-		// permissions (typically 0644). The next Open() check would then refuse.
 		f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 		if err != nil {
 			return nil, fmt.Errorf("create db file: %w", err)
 		}
 		_ = f.Close()
 
-		// Use BEGIN IMMEDIATE by default for write txns (modernc.org/sqlite
-		// supports _txlock URL param).
 		dsn = "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_txlock=immediate"
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	// One connection avoids WAL-related multi-handle issues for our low-volume case.
 	db.SetMaxOpenConns(1)
+
+	var ver int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&ver); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("read user_version: %w", err)
+	}
+	if ver < schemaVersion {
+		if _, err := db.Exec(wipeOldSchema); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("wipe old schema: %w", err)
+		}
+	}
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
-	// WAL mode creates -wal and -shm sidecar files on first write; force them
-	// to 0600 as well. (No-op if they don't exist yet.)
+	if ver < schemaVersion {
+		if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("set user_version: %w", err)
+		}
+	}
+
 	if path != ":memory:" {
 		for _, sfx := range []string{"", "-wal", "-shm"} {
 			_ = os.Chmod(path+sfx, 0o600)
@@ -80,7 +92,6 @@ func (s *Store) Close() error {
 }
 
 // WithTx runs fn inside a write transaction (BEGIN IMMEDIATE due to the DSN).
-// Commits on nil return; rolls back otherwise.
 func (s *Store) WithTx(ctx context.Context, fn func(*sql.Tx) error) (err error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -95,4 +106,11 @@ func (s *Store) WithTx(ctx context.Context, fn func(*sql.Tx) error) (err error) 
 		return err
 	}
 	return tx.Commit()
+}
+
+func nullableString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }

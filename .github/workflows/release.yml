@@ -43,7 +43,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # need full history to find the latest tag
 
@@ -105,7 +105,7 @@ jobs:
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ steps.ref.outputs.ref }}
 

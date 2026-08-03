@@ -10,13 +10,22 @@ import (
 func (s *Store) MarkNotificationFired(ctx context.Context,
 	dimension string, threshold int, resetTimestamp time.Time,
 ) (bool, error) {
+	return s.MarkNotificationFiredKey(ctx, dimension, threshold,
+		resetTimestamp.UTC().Format(time.RFC3339Nano))
+}
+
+// MarkNotificationFiredKey is MarkNotificationFired with an opaque window
+// string rather than a timestamp, so limits with no reset (credit spend) can
+// still be debounced against a synthetic window such as "month:2026-08".
+func (s *Store) MarkNotificationFiredKey(ctx context.Context,
+	limitKey string, threshold int, window string,
+) (bool, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	resetISO := resetTimestamp.UTC().Format(time.RFC3339Nano)
 	res, err := s.DB.ExecContext(ctx, `
 		INSERT OR IGNORE INTO notification_log
 		    (dimension, threshold, reset_timestamp, fired_at)
 		VALUES (?, ?, ?, ?)
-	`, dimension, threshold, resetISO, now)
+	`, limitKey, threshold, window, now)
 	if err != nil {
 		return false, err
 	}

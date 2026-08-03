@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	_ "embed"
 	"errors"
-	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -21,32 +20,41 @@ import (
 //go:embed assets/icon-64.png
 var brandIconPNG []byte
 
+// trayTooltip is deliberately static.
+const trayTooltip = "Claude Monitor"
+
 func (st *state) refreshIcon() {
 	if st.desk == nil {
 		return
 	}
 	v, ok := st.iconNumbers()
-	var iconBytes []byte
-	tooltip := "Claude Monitor — no data yet"
-	if !ok {
-		iconBytes = brandIconPNG
-	} else {
+	iconBytes := brandIconPNG
+	if ok {
 		iconBytes = renderDuoBarIcon(v.sessionUsage, v.weeklyUsage)
-		tooltip = tooltipFor(v)
 	}
-	res := fyne.NewStaticResource("claude-monitor-tray", iconBytes)
+	// Push the icon only when the pixels actually change: some SNI hosts flicker
+	// on every SetSystemTrayIcon.
+	st.iconMu.Lock()
+	iconChanged := !bytes.Equal(iconBytes, st.lastIcon)
+	if iconChanged {
+		st.lastIcon = bytes.Clone(iconBytes)
+	}
+	st.iconMu.Unlock()
+
 	fyne.Do(func() {
-		systray.SetTooltip(tooltip)
-		st.desk.SetSystemTrayIcon(res)
+		// The tooltip is just the app name: clicking the icon opens the menu,
+		// which already lists every limit with its countdown.
+		systray.SetTooltip(trayTooltip)
+		if iconChanged {
+			st.desk.SetSystemTrayIcon(fyne.NewStaticResource("claude-monitor-tray", iconBytes))
+		}
 	})
 }
 
+// iconValues carries exactly what the icon draws: two bars.
 type iconValues struct {
-	sessionUsage   float64
-	weeklyUsage    float64
-	sessionResetAt time.Time
-	weeklyResetAt  time.Time
-	accountName    string
+	sessionUsage float64
+	weeklyUsage  float64
 }
 
 func (st *state) iconNumbers() (iconValues, bool) {
@@ -57,37 +65,17 @@ func (st *state) iconNumbers() (iconValues, bool) {
 	ctx, cancel := context.WithTimeout(st.ctx, 2*time.Second)
 	defer cancel()
 
-	rec, err := st.env.Store.LatestUsage(ctx)
+	rec, err := st.env.Store.LatestReading(ctx)
 	if errors.Is(err, sql.ErrNoRows) || err != nil {
 		return v, false
 	}
-	v.sessionUsage = valOrZero(rec.SessionPercent)
-	v.weeklyUsage = valOrZero(rec.WeeklyPercent)
-	if rec.SessionReset.Valid {
-		if t, ok := parseISOTime(rec.SessionReset.String); ok {
-			v.sessionResetAt = t
-		}
+	if l, ok := rec.Session(); ok {
+		v.sessionUsage = l.Percent
 	}
-	if rec.WeeklyReset.Valid {
-		if t, ok := parseISOTime(rec.WeeklyReset.String); ok {
-			v.weeklyResetAt = t
-		}
+	if l, ok := rec.Weekly(); ok {
+		v.weeklyUsage = l.Percent
 	}
-	label, _, _, _ := st.env.Poller.Status()
-	if label == "" {
-		label = "Claude Code"
-	}
-	v.accountName = label
 	return v, true
-}
-
-func parseISOTime(s string) (time.Time, bool) {
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t, true
-		}
-	}
-	return time.Time{}, false
 }
 
 // renderDuoBarIcon draws a square-ish icon with two wide vertical bars:
@@ -121,31 +109,6 @@ func renderDuoBarIcon(sessionPct, weeklyPct float64) []byte {
 	return buf.Bytes()
 }
 
-func tooltipFor(v iconValues) string {
-	return fmt.Sprintf("Claude Monitor — %s\nSession (5h): %.0f%% · resets %s\nWeekly  (7d): %.0f%% · resets %s",
-		v.accountName,
-		v.sessionUsage, humanResetCompact(v.sessionResetAt),
-		v.weeklyUsage, humanResetCompact(v.weeklyResetAt),
-	)
-}
-
-func humanResetCompact(t time.Time) string {
-	if t.IsZero() {
-		return "—"
-	}
-	d := time.Until(t)
-	if d <= 0 {
-		return "now"
-	}
-	if d < time.Hour {
-		return fmt.Sprintf("in %dm", int(d.Minutes()))
-	}
-	if d < 24*time.Hour {
-		return fmt.Sprintf("in %dh %dm", int(d.Hours()), int(d.Minutes())%60)
-	}
-	return fmt.Sprintf("in %dd %dh", int(d.Hours()/24), int(d.Hours())%24)
-}
-
 var trackColor = color.NRGBA{R: 0xB0, G: 0xAE, B: 0xA5, A: 0x55}
 
 func colorForUsage(pct float64) color.Color {
@@ -165,11 +128,4 @@ func fillRect(img *image.RGBA, x0, y0, x1, y1 int, c color.Color) {
 			img.Set(x, y, c)
 		}
 	}
-}
-
-func valOrZero(n sql.NullFloat64) float64 {
-	if n.Valid {
-		return n.Float64
-	}
-	return 0
 }

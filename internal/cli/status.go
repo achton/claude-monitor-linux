@@ -11,20 +11,38 @@ import (
 	"time"
 )
 
+// LimitView is one limit as exposed to JSON and Go-template renderers.
+type LimitView struct {
+	Key        string  `json:"key"`
+	Kind       string  `json:"kind"`
+	Group      string  `json:"group"`
+	Label      string  `json:"label"`
+	ScopeModel string  `json:"scope_model,omitempty"`
+	Percent    float64 `json:"percent"`
+	Severity   string  `json:"severity"`
+	ResetIn    string  `json:"reset_in,omitempty"`
+	ResetAt    string  `json:"reset_at,omitempty"`
+}
+
 // StatusView is the structure exposed to JSON and Go-template renderers.
+//
+// Limits carries every limit the API reported. The Session*/Weekly* fields are
+// kept as conveniences for existing --format templates and status lines; they
+// are empty when the API stops reporting that limit.
 type StatusView struct {
-	AccountName      string    `json:"account_name"`
-	PrimaryPercent   float64   `json:"primary_percent"`
-	SessionPercent   float64   `json:"session_percent"`
-	WeeklyPercent    float64   `json:"weekly_percent"`
-	SessionResetIn   string    `json:"session_reset_in"`
-	WeeklyResetIn    string    `json:"weekly_reset_in"`
-	SessionResetAt   string    `json:"session_reset_at"`
-	WeeklyResetAt    string    `json:"weekly_reset_at"`
-	LastUpdated      string    `json:"last_updated"`
-	IsRateLimited    bool      `json:"is_rate_limited"`
-	IsWeeklyDominant bool      `json:"is_weekly_dominant"`
-	collectedAt      time.Time `json:"-"`
+	AccountName      string      `json:"account_name"`
+	PrimaryPercent   float64     `json:"primary_percent"`
+	Limits           []LimitView `json:"limits"`
+	SessionPercent   float64     `json:"session_percent"`
+	WeeklyPercent    float64     `json:"weekly_percent"`
+	SessionResetIn   string      `json:"session_reset_in"`
+	WeeklyResetIn    string      `json:"weekly_reset_in"`
+	SessionResetAt   string      `json:"session_reset_at"`
+	WeeklyResetAt    string      `json:"weekly_reset_at"`
+	LastUpdated      string      `json:"last_updated"`
+	IsRateLimited    bool        `json:"is_rate_limited"`
+	IsWeeklyDominant bool        `json:"is_weekly_dominant"`
+	collectedAt      time.Time   `json:"-"`
 }
 
 // Status implements `claude-monitor status`.
@@ -71,19 +89,31 @@ func Status(env *Env, args []string) int {
 	return exitCodeFor(v.PrimaryPercent)
 }
 
+// printPlain keeps its summary first line stable for status bars and scripts
+// that read only the first line, then details every reported limit below it.
 func printPlain(env *Env, v StatusView) {
 	if v.IsRateLimited {
 		fmt.Fprintf(env.Stdout, "LLM %.0f%% (RATE LIMITED) — %s\n", v.PrimaryPercent, v.AccountName)
-		return
+	} else {
+		fmt.Fprintf(env.Stdout,
+			"LLM %.0f%% (session %.0f%%, weekly %.0f%%; resets %s) — %s\n",
+			v.PrimaryPercent, v.SessionPercent, v.WeeklyPercent, v.SessionResetIn, v.AccountName,
+		)
 	}
-	dom := "session"
-	if v.IsWeeklyDominant {
-		dom = "weekly"
+
+	width := 0
+	for _, l := range v.Limits {
+		if n := len([]rune(l.Label)); n > width {
+			width = n
+		}
 	}
-	fmt.Fprintf(env.Stdout,
-		"LLM %.0f%% (%s dominant; session %.0f%%, weekly %.0f%%; resets %s) — %s\n",
-		v.PrimaryPercent, dom, v.SessionPercent, v.WeeklyPercent, v.SessionResetIn, v.AccountName,
-	)
+	for _, l := range v.Limits {
+		line := fmt.Sprintf("  %-*s %5.0f%%", width, l.Label, l.Percent)
+		if l.ResetIn != "" {
+			line += "  resets " + l.ResetIn
+		}
+		fmt.Fprintln(env.Stdout, line)
+	}
 }
 
 func exitCodeFor(p float64) int {
@@ -100,7 +130,7 @@ func exitCodeFor(p float64) int {
 }
 
 func buildStatusView(env *Env) (StatusView, error) {
-	rec, err := env.Store.LatestUsage(env.Ctx)
+	rec, err := env.Store.LatestReading(env.Ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return StatusView{}, errors.New("no usage data yet (run `claude-monitor poll`)")
 	}
@@ -114,23 +144,41 @@ func buildStatusView(env *Env) (StatusView, error) {
 	v := StatusView{
 		AccountName:    label,
 		PrimaryPercent: round1(rec.PrimaryPercent()),
-		SessionPercent: round1(valOrZero(rec.SessionPercent)),
-		WeeklyPercent:  round1(valOrZero(rec.WeeklyPercent)),
 		collectedAt:    rec.Timestamp,
+		LastUpdated:    rec.Timestamp.UTC().Format(time.RFC3339),
 	}
-	if rec.SessionReset.Valid {
-		if t, ok := parseISO(rec.SessionReset.String); ok {
-			v.SessionResetAt = t.UTC().Format(time.RFC3339)
-			v.SessionResetIn = humanDuration(time.Until(t))
+
+	for _, l := range rec.Limits {
+		lv := LimitView{
+			Key:        l.Key(),
+			Kind:       l.Kind,
+			Group:      l.Group,
+			Label:      l.Label(),
+			ScopeModel: l.ScopeModel,
+			Percent:    round1(l.Percent),
+			Severity:   l.Severity,
+		}
+		if !l.ResetsAt.IsZero() {
+			lv.ResetAt = l.ResetsAt.UTC().Format(time.RFC3339)
+			lv.ResetIn = humanDuration(time.Until(l.ResetsAt))
+		}
+		v.Limits = append(v.Limits, lv)
+	}
+
+	if l, ok := rec.Session(); ok {
+		v.SessionPercent = round1(l.Percent)
+		if !l.ResetsAt.IsZero() {
+			v.SessionResetAt = l.ResetsAt.UTC().Format(time.RFC3339)
+			v.SessionResetIn = humanDuration(time.Until(l.ResetsAt))
 		}
 	}
-	if rec.WeeklyReset.Valid {
-		if t, ok := parseISO(rec.WeeklyReset.String); ok {
-			v.WeeklyResetAt = t.UTC().Format(time.RFC3339)
-			v.WeeklyResetIn = humanDuration(time.Until(t))
+	if l, ok := rec.Weekly(); ok {
+		v.WeeklyPercent = round1(l.Percent)
+		if !l.ResetsAt.IsZero() {
+			v.WeeklyResetAt = l.ResetsAt.UTC().Format(time.RFC3339)
+			v.WeeklyResetIn = humanDuration(time.Until(l.ResetsAt))
 		}
 	}
-	v.LastUpdated = rec.Timestamp.UTC().Format(time.RFC3339)
 	v.IsWeeklyDominant = v.WeeklyPercent >= v.SessionPercent
 	if v.PrimaryPercent >= 100 {
 		v.IsRateLimited = true
@@ -138,23 +186,7 @@ func buildStatusView(env *Env) (StatusView, error) {
 	return v, nil
 }
 
-func valOrZero(n sql.NullFloat64) float64 {
-	if n.Valid {
-		return n.Float64
-	}
-	return 0
-}
-
 func round1(f float64) float64 { return math.Round(f*10) / 10 }
-
-func parseISO(s string) (time.Time, bool) {
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t, true
-		}
-	}
-	return time.Time{}, false
-}
 
 func humanDuration(d time.Duration) string {
 	if d <= 0 {

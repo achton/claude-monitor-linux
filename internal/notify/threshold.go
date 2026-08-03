@@ -15,51 +15,65 @@ import (
 type Evaluator struct {
 	Store      *store.Store
 	Notifier   *Notifier
-	Thresholds []int  // e.g. {75, 90, 95}; the synthetic 100 (rejected) is always evaluated
+	Thresholds []int  // e.g. {75, 90, 95}; 100 (limit hit) is always evaluated
 	AppName    string // visible app name shown by the notification server
 }
 
-// EvaluateReading inspects the reading and fires notifications for any
-// thresholds it just crossed since the last reset window.
+// EvaluateReading inspects every limit in the reading and fires notifications
+// for any threshold just crossed within the current reset window. Iterating the
+// reported limits rather than a fixed session/weekly pair means a newly
+// introduced limit alerts without a code change.
 func (e *Evaluator) EvaluateReading(ctx context.Context, accountLabel string, r api.UsageReading) error {
 	if e == nil || e.Store == nil || e.Notifier == nil {
 		return nil
 	}
-	if r.IsRateLimited() {
-		_ = e.fireIfNew(ctx, accountLabel, "weekly", 100, r.SevenDayReset, "weekly limit hit (rate-limited)")
-		_ = e.fireIfNew(ctx, accountLabel, "session", 100, r.FiveHourReset, "5h limit hit (rate-limited)")
-	}
+
 	thresholds := append([]int(nil), e.Thresholds...)
 	sort.Sort(sort.Reverse(sort.IntSlice(thresholds)))
 
-	for _, t := range thresholds {
-		if r.FiveHourPercent >= float64(t) && r.FiveHourReset.After(time.Now()) {
-			_ = e.fireIfNew(ctx, accountLabel, "session", t, r.FiveHourReset,
-				fmt.Sprintf("5h at %.0f%% (resets %s)", r.FiveHourPercent, humanReset(r.FiveHourReset)))
-			break
+	for _, l := range r.Limits {
+		if l.Percent >= 100 {
+			_ = e.fireIfNew(ctx, accountLabel, l, 100,
+				fmt.Sprintf("%s limit hit (rate-limited)", l.Label()))
+			continue
 		}
-	}
-	for _, t := range thresholds {
-		if r.SevenDayPercent >= float64(t) && r.SevenDayReset.After(time.Now()) {
-			_ = e.fireIfNew(ctx, accountLabel, "weekly", t, r.SevenDayReset,
-				fmt.Sprintf("weekly at %.0f%% (resets %s)", r.SevenDayPercent, humanReset(r.SevenDayReset)))
+		// Highest crossed threshold only, so one poll never fires 75/90/95 at once.
+		for _, t := range thresholds {
+			if l.Percent < float64(t) {
+				continue
+			}
+			_ = e.fireIfNew(ctx, accountLabel, l, t,
+				fmt.Sprintf("%s at %.0f%%%s", l.Label(), l.Percent, resetSuffix(l.ResetsAt)))
 			break
 		}
 	}
 	return nil
 }
 
-func (e *Evaluator) fireIfNew(ctx context.Context, accountLabel, dim string, threshold int, reset time.Time, msg string) error {
-	if reset.IsZero() {
-		return nil
+// fireIfNew debounces on (limit key, threshold, reset window) so a threshold
+// fires once per window rather than on every poll.
+func (e *Evaluator) fireIfNew(ctx context.Context, accountLabel string, l api.Limit, threshold int, msg string) error {
+	// A limit with no reset (credit spend, which is a monthly cap the API does
+	// not date) still needs a debounce window, else the first alert would be
+	// the only one ever. Fall back to the calendar month.
+	window := "month:" + time.Now().UTC().Format("2006-01")
+	if !l.ResetsAt.IsZero() {
+		if !l.ResetsAt.After(time.Now()) {
+			// Stale window: the limit should have reset already. Don't alert on
+			// a percentage that belongs to an expired window.
+			return nil
+		}
+		window = l.ResetsAt.UTC().Format(time.RFC3339)
 	}
-	fired, err := e.Store.MarkNotificationFired(ctx, dim, threshold, reset)
+
+	fired, err := e.Store.MarkNotificationFiredKey(ctx, l.Key(), threshold, window)
 	if err != nil {
 		return err
 	}
 	if !fired {
 		return nil
 	}
+
 	u := UrgencyLow
 	switch {
 	case threshold >= 95:
@@ -68,9 +82,15 @@ func (e *Evaluator) fireIfNew(ctx context.Context, accountLabel, dim string, thr
 		u = UrgencyNormal
 	}
 	_, err = e.Notifier.Send(e.AppName,
-		fmt.Sprintf("%s — %s", accountLabel, dim),
-		msg, u)
+		fmt.Sprintf("%s — %s", accountLabel, l.Label()), msg, u)
 	return err
+}
+
+func resetSuffix(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return " (resets " + humanReset(t) + ")"
 }
 
 func humanReset(t time.Time) string {

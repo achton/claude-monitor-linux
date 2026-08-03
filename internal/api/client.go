@@ -9,7 +9,9 @@ import (
 	"time"
 )
 
-// User-Agent updated at build time via -ldflags. Set to a recent claude-code version.
+// UserAgent is sent to the usage endpoint, which is version-sensitive. The
+// Makefile overrides it at build time via -ldflags (see USER_AGENT); this
+// default keeps `go build` and `go test` working on their own.
 var UserAgent = "claude-code/2.0.37"
 
 const (
@@ -48,7 +50,7 @@ func (c *Client) OAuthUsage(ctx context.Context, token string) (UsageReading, er
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
 
 	switch resp.StatusCode {
 	case http.StatusOK:
@@ -63,29 +65,163 @@ func (c *Client) OAuthUsage(ctx context.Context, token string) (UsageReading, er
 		return UsageReading{RawJSON: string(body)}, fmt.Errorf("decode oauth_usage body: %w", err)
 	}
 
-	r := UsageReading{
-		FiveHourPercent: parsed.FiveHour.Utilization,
-		FiveHourReset:   parseTime(parsed.FiveHour.ResetsAt),
-		SevenDayPercent: parsed.SevenDay.Utilization,
-		SevenDayReset:   parseTime(parsed.SevenDay.ResetsAt),
-		RawJSON:         string(body),
+	r := UsageReading{RawJSON: string(body)}
+	r.Limits = parsed.limits()
+	r.Spend = parsed.spend()
+	if l, ok := parsed.spendLimit(); ok {
+		r.Limits = append(r.Limits, l)
 	}
-	if parsed.SevenDaySonnet != nil {
-		r.SevenDaySonnetPercent = parsed.SevenDaySonnet.Utilization
-		r.SevenDaySonnetReset = parseTime(parsed.SevenDaySonnet.ResetsAt)
-	}
+	SortLimits(r.Limits)
 	return r, nil
 }
 
+// SpendFromRaw extracts the credit-spend block from a stored raw response body.
+// Spend is money rather than a percentage, so it is read back from raw_data for
+// display instead of being denormalised into its own columns; its percentage is
+// already tracked as a limit and carries the history.
+func SpendFromRaw(raw string) (Spend, bool) {
+	if raw == "" {
+		return Spend{}, false
+	}
+	var parsed oauthUsageBody
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return Spend{}, false
+	}
+	s := parsed.spend()
+	return s, s.Enabled
+}
+
 type oauthUsageBody struct {
-	FiveHour       oauthUsageWindow  `json:"five_hour"`
-	SevenDay       oauthUsageWindow  `json:"seven_day"`
-	SevenDaySonnet *oauthUsageWindow `json:"seven_day_sonnet,omitempty"`
+	// The self-describing surface. Preferred: it names its own kinds, so a
+	// limit Anthropic adds or renames flows through without a code change.
+	Limits []oauthLimit `json:"limits"`
+
+	// Legacy flat windows, used only when limits[] is absent.
+	FiveHour *oauthUsageWindow `json:"five_hour"`
+	SevenDay *oauthUsageWindow `json:"seven_day"`
+
+	Spend      *oauthSpend      `json:"spend"`
+	ExtraUsage *oauthExtraUsage `json:"extra_usage"`
+}
+
+type oauthLimit struct {
+	Kind     string  `json:"kind"`
+	Group    string  `json:"group"`
+	Percent  float64 `json:"percent"`
+	Severity string  `json:"severity"`
+	ResetsAt string  `json:"resets_at"`
+	IsActive bool    `json:"is_active"`
+	Scope    *struct {
+		Model *struct {
+			ID          *string `json:"id"`
+			DisplayName string  `json:"display_name"`
+		} `json:"model"`
+	} `json:"scope"`
 }
 
 type oauthUsageWindow struct {
 	Utilization float64 `json:"utilization"`
 	ResetsAt    string  `json:"resets_at"`
+}
+
+type oauthMoney struct {
+	AmountMinor int64  `json:"amount_minor"`
+	Currency    string `json:"currency"`
+	Exponent    int    `json:"exponent"`
+}
+
+type oauthSpend struct {
+	Used     oauthMoney `json:"used"`
+	Limit    oauthMoney `json:"limit"`
+	Percent  float64    `json:"percent"`
+	Severity string     `json:"severity"`
+	Enabled  bool       `json:"enabled"`
+}
+
+type oauthExtraUsage struct {
+	IsEnabled bool `json:"is_enabled"`
+}
+
+// limits converts the response into normalized Limits, preferring the
+// self-describing array and falling back to the flat windows.
+func (b oauthUsageBody) limits() []Limit {
+	if len(b.Limits) > 0 {
+		out := make([]Limit, 0, len(b.Limits))
+		for _, l := range b.Limits {
+			out = append(out, Limit{
+				Kind:       l.Kind,
+				Group:      l.Group,
+				Percent:    l.Percent,
+				Severity:   l.Severity,
+				ResetsAt:   parseTime(l.ResetsAt),
+				IsActive:   l.IsActive,
+				ScopeModel: l.scopeModel(),
+			})
+		}
+		return out
+	}
+
+	var out []Limit
+	if b.FiveHour != nil {
+		out = append(out, Limit{
+			Kind: KindSession, Group: GroupSession,
+			Percent: b.FiveHour.Utilization, Severity: "normal",
+			ResetsAt: parseTime(b.FiveHour.ResetsAt),
+		})
+	}
+	if b.SevenDay != nil {
+		out = append(out, Limit{
+			Kind: KindWeeklyAll, Group: GroupWeekly,
+			Percent: b.SevenDay.Utilization, Severity: "normal",
+			ResetsAt: parseTime(b.SevenDay.ResetsAt),
+		})
+	}
+	return out
+}
+
+func (l oauthLimit) scopeModel() string {
+	if l.Scope == nil || l.Scope.Model == nil {
+		return ""
+	}
+	return l.Scope.Model.DisplayName
+}
+
+func (b oauthUsageBody) spend() Spend {
+	if b.Spend == nil {
+		return Spend{}
+	}
+	return Spend{
+		Enabled:       b.Spend.Enabled,
+		Currency:      b.Spend.Limit.Currency,
+		DecimalPlaces: b.Spend.Limit.Exponent,
+		UsedMinor:     b.Spend.Used.AmountMinor,
+		LimitMinor:    b.Spend.Limit.AmountMinor,
+		Percent:       b.Spend.Percent,
+	}
+}
+
+// spendLimit exposes credit spend as a Limit so it gets history and threshold
+// alerting like any other constraint. Omitted when spend is disabled, and when
+// limits[] already carries a spend entry of its own.
+func (b oauthUsageBody) spendLimit() (Limit, bool) {
+	if b.Spend == nil || !b.Spend.Enabled || b.Spend.Limit.AmountMinor <= 0 {
+		return Limit{}, false
+	}
+	for _, l := range b.Limits {
+		if l.Kind == KindSpend {
+			return Limit{}, false
+		}
+	}
+	severity := b.Spend.Severity
+	if severity == "" {
+		severity = "normal"
+	}
+	return Limit{
+		Kind:     KindSpend,
+		Group:    GroupSpend,
+		Percent:  b.Spend.Percent,
+		Severity: severity,
+	}, true
 }
 
 func parseTime(s string) time.Time {

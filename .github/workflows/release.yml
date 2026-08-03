@@ -124,8 +124,13 @@ jobs:
             libwayland-dev libxkbcommon-dev wayland-protocols
 
       - name: Install nfpm and appimagetool
+        # nfpm is a build tool, not a dependency: pin it, and let Go fetch the
+        # toolchain it needs rather than the project's (setup-go pins
+        # GOTOOLCHAIN=local at go.mod's version, which nfpm now outruns).
+        env:
+          GOTOOLCHAIN: auto
         run: |
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
           mkdir -p ~/.local/bin
           curl -fsSL -o ~/.local/bin/appimagetool \
             https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage

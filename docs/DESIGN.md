@@ -1,6 +1,6 @@
 # Claude Monitor (Linux) — Design Document
 
-**Status:** Single-account live-read architecture — 2026-05-26
+**Status:** Single-account live-read architecture, generic limit model — 2026-08-03
 **Module:** `github.com/achton/claude-monitor-linux`
 **License:** MIT
 
@@ -64,15 +64,15 @@ store removes the bug class entirely. See decision #1 in the log.
 │    PollNow():                                                          │
 │      1. read access token from ~/.claude/.credentials.json             │
 │      2. call api.Client.OAuthUsage(token)                              │
-│      3. insert one row into usage_history                              │
+│      3. insert a usage_reading + one usage_limit row per limit         │
 │      4. notify.Evaluator.EvaluateReading(label, reading)               │
 │      5. update in-memory Status() snapshot for the UI                  │
 └──────────────────────────────┬─────────────────────────────────────────┘
-              writes usage_history rows
+            writes usage_reading + usage_limit rows
                                ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │  SQLite WAL @ ~/.local/share/claude-monitor/usage.db                   │
-│    Tables: usage_history, notification_log                             │
+│    Tables: usage_reading, usage_limit, notification_log                │
 └──────────────────────────────┬─────────────────────────────────────────┘
                                │ shared read access (WAL)
         ┌──────────────────────┼──────────────────────┐
@@ -105,7 +105,8 @@ claude-monitor-linux/
 │   ├── store/                      # SQLite persistence
 │   │   ├── store.go                # Open, schema-version wipe, WithTx
 │   │   ├── schema.go               # tables + DROP-old-schema block
-│   │   ├── usage.go                # usage_history CRUD
+│   │   ├── usage.go                # reading + limit CRUD
+│   │   ├── peaks.go                # peaks, gap tolerance, chart segments
 │   │   ├── notifications.go        # notification_log dedupe
 │   │   └── store_test.go
 │   ├── notify/                     # libnotify (org.freedesktop.Notifications)
@@ -117,8 +118,10 @@ claude-monitor-linux/
 │   │   ├── menu.go                 # SNI menu
 │   │   └── assets/
 │   ├── ui/                         # Fyne windows (dashboard, settings)
-│   │   ├── account_list.go         # Dashboard (single account)
-│   │   ├── chart.go                # 24h/7d/30d history chart
+│   │   ├── account_list.go         # Dashboard: per-limit rows, close-calls
+│   │   │                            #   summary, live-ticking countdowns
+│   │   ├── chart.go                # 24h/7d/30d chart: legend, 75/90%
+│   │   │                            #   guides, gap bridges, peak markers
 │   │   └── settings.go             # Threshold/interval/autostart config
 │   ├── cli/                        # CLI handlers
 │   │   ├── cli.go                  # Dispatcher: status, poll, version, help
@@ -148,25 +151,29 @@ ReadClaudeCodeToken("")
   ↓
 api.Client.OAuthUsage(ctx, token)
   → GET /api/oauth/usage with Bearer + anthropic-beta: oauth-2025-04-20
-  → 200: parse five_hour/seven_day/seven_day_sonnet utilization + resets_at
+  → 200: parse the self-describing limits[] array (kind, group, percent,
+         severity, resets_at, scope.model); fall back to five_hour/seven_day
+         when limits[] is absent
   → 401: return ErrUnauthorized
   → other: return ErrHTTP
   ↓
 WithTx:
-  - LatestUsageInTx → detect weekly reset (drop > 5%)
-  - if reset detected and no synthetic row in the last minute: insert two
-    synthetic rows (pre-reset peak, post-reset zero) so the chart draws
-    the discontinuity correctly
-  - InsertUsageReading(session%, weekly%, weekly_sonnet%, resets, raw_json)
+  - LatestReadingInTx → resetKeys(): per-limit drop > 5%
+  - if any rolled over and no synthetic row in the last minute: insert two
+    synthetic rows (pre-reset values, then zero for the rolled-over limits
+    only) so the chart draws the discontinuity without faking a cliff on
+    limits that did not reset
+  - InsertReading(limits, raw_json)
   ↓
 poller stores label/lastSuccess in its in-memory state
   ↓
 notify.Evaluator.EvaluateReading(label, reading)
-  → for each threshold {95, 90, 75} desc, dim {session, weekly}:
-    if utilization ≥ threshold AND reset > now:
-      MarkNotificationFired(dim, threshold, reset) → INSERT OR IGNORE
+  → for each limit the API reported (not a fixed session/weekly pair):
+    highest crossed threshold of {100, 95, 90, 75}, if reset > now:
+      MarkNotificationFiredKey(limit.Key(), threshold, window) → INSERT OR IGNORE
       if newly fired: Notifier.Send(...)
-      break (one threshold per dim per cycle)
+    a limit with no reset window (credit spend) debounces on the calendar
+    month, else its first alert would be its only one
 ```
 
 On error, the poller stores the error string in memory and returns. The
@@ -179,32 +186,44 @@ flips to false for the rest of the process lifetime.
 
 ## 6. Data model
 
-### `usage_history`
+### `usage_reading` + `usage_limit` (schema v3)
 
 ```sql
-CREATE TABLE usage_history (
-    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp             TEXT NOT NULL,
-    session_percent       REAL,
-    weekly_percent        REAL,
-    weekly_sonnet_percent REAL,
-    session_reset         TEXT,
-    weekly_reset          TEXT,
-    raw_data              TEXT,
-    is_synthetic          INTEGER DEFAULT 0
+CREATE TABLE usage_reading (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp    TEXT NOT NULL,
+    raw_data     TEXT,
+    is_synthetic INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX idx_usage_timestamp ON usage_history(timestamp DESC);
+
+CREATE TABLE usage_limit (
+    reading_id  INTEGER NOT NULL REFERENCES usage_reading(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL,          -- 'session' | 'weekly_all' | 'weekly_scoped' | 'spend' | ...
+    limit_group TEXT NOT NULL,
+    scope_model TEXT NOT NULL DEFAULT '',
+    percent     REAL NOT NULL,
+    severity    TEXT NOT NULL DEFAULT 'normal',
+    resets_at   TEXT,
+    is_active   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (reading_id, kind, scope_model)
+);
 ```
 
-One row per poll (plus pairs of synthetic rows at weekly reset boundaries).
-No `account_id` column — the app is single-account by construction.
+One `usage_reading` per poll (plus synthetic pairs at reset boundaries), and one
+`usage_limit` row per limit the API reported. Percentages live only in
+`usage_limit`: the set of limits is open-ended, so fixed columns per limit go
+stale — v2 carried a `weekly_sonnet_percent` that the API stopped reporting.
+Limits are keyed by `(kind, scope_model)` so a model-scoped weekly limit does not
+collide with the unscoped one. `is_active` is stored as a raw passthrough and is
+deliberately not used for display. No `account_id` — single-account by
+construction.
 
 ### `notification_log`
 
 ```sql
 CREATE TABLE notification_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    dimension       TEXT NOT NULL,        -- 'session' | 'weekly'
+    dimension       TEXT NOT NULL,        -- limit key, e.g. 'session', 'weekly_scoped:Fable'
     threshold       INTEGER NOT NULL,     -- 75 | 90 | 95 | 100
     reset_timestamp TEXT NOT NULL,
     fired_at        TEXT NOT NULL,
@@ -218,14 +237,15 @@ GC'd when `reset_timestamp < now`.
 
 ### Schema versioning
 
-`PRAGMA user_version` is bumped to `schemaVersion = 2` after the new tables
-are created. On open, if `user_version < schemaVersion`, every old table is
-dropped (idempotent `DROP TABLE IF EXISTS`) before the new schema runs.
+`PRAGMA user_version` tracks `schemaVersion = 3`. On open, v2 databases are
+*migrated*: their fixed-column readings are copied into `usage_reading` +
+`usage_limit` rows, then `usage_history` is dropped. Usage history is the point
+of the app, so it is preserved rather than discarded. `weekly_sonnet_percent` is
+dropped on the way through — the API stopped reporting it, so every stored value
+is zero.
 
-This is the one-shot migration from the v0.1.x multi-account schema. There
-is no other migration code, and there is no schema-evolution roadmap; if
-the schema ever changes again, bump `schemaVersion` and add the relevant
-drops.
+Anything older than v2 predates a mappable shape and is still wiped
+(idempotent `DROP TABLE IF EXISTS`).
 
 ## 7. Filesystem layout
 
@@ -263,7 +283,7 @@ toggle. The schema is intentionally tiny.
 
 ## 9. Distribution
 
-Build from source for v0.1.x:
+Build from source:
 
 ```bash
 make build
@@ -273,9 +293,9 @@ install -Dm0755 bin/claude-monitor ~/.local/bin/claude-monitor
 User-space install, no sudo. `~/.local/bin` is on PATH by default on most
 modern distros (Ubuntu 22.04+, Debian 12+, Fedora 38+, Arch, etc.).
 
-A `.deb` (and possibly AppImage) will return for v0.2.0 once the design has
-settled. The pre-refactor 0.1.5 `.deb` shipped the multi-account code and
-the bug it caused; building from source is the only supported path right now.
+`.deb` and AppImage builds returned in v0.2.0 and are attached to GitHub
+Releases. Building from source needs the Wayland dev headers as well as the X11
+ones: GLFW 3.4 (via Fyne 2.8) compiles both backends regardless of session type.
 
 ## 10. Headless CLI safety
 
@@ -324,4 +344,4 @@ version` without DISPLAY/WAYLAND_DISPLAY/XDG_RUNTIME_DIR to verify.
 | 13 | `notification_log` GC anchored on each row's `reset_timestamp` | Local clock — vulnerable to drift |
 | 14 | Synthetic-row insert wrapped in `BEGIN IMMEDIATE` transaction + 60 s idempotency guard | No transaction (race) |
 | 15 | Headless CLI safety enforced by (a) import discipline in `cmd/claude-monitor/main.go` and (b) CI test under `env -i` | Trust fyne's import to remain side-effect-free indefinitely |
-| 16 | User-space install at `~/.local/bin/` for v0.1.x; `.deb` returns at v0.2.0 | System-wide `.deb` only; AppImage-first |
+| 16 | User-space install at `~/.local/bin/`; `.deb` + AppImage from v0.2.0 | System-wide `.deb` only; AppImage-first |

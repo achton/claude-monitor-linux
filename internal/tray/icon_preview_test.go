@@ -13,9 +13,9 @@ func TestRenderQuadBarSamples(t *testing.T) {
 		t.Skip("CM_PREVIEW=1 not set")
 	}
 	cases := []struct {
-		name           string
-		sessionUsage   float64
-		weeklyUsage    float64
+		name         string
+		sessionUsage float64
+		weeklyUsage  float64
 	}{
 		{"01-fresh-low", 10, 5},
 		{"02-current-real", 53, 7},

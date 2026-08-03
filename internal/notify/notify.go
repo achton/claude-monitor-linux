@@ -67,14 +67,14 @@ func (n *Notifier) Send(appName, summary, body string, urgency Urgency) (uint32,
 	obj := n.conn.Object(dbusObject, dbus.ObjectPath(dbusPath))
 	var id uint32
 	err := obj.Call(dbusInterface, 0,
-		appName,            // app_name
-		uint32(0),          // replaces_id
-		"claude-monitor",   // app_icon (lookup name)
-		summary,            // summary
-		body,               // body
-		[]string{},         // actions
-		hints,              // hints
-		int32(-1),          // expire_timeout (-1 = server default)
+		appName,          // app_name
+		uint32(0),        // replaces_id
+		"claude-monitor", // app_icon (lookup name)
+		summary,          // summary
+		body,             // body
+		[]string{},       // actions
+		hints,            // hints
+		int32(-1),        // expire_timeout (-1 = server default)
 	).Store(&id)
 	if err != nil {
 		return 0, fmt.Errorf("dbus Notify: %w", err)

@@ -1,7 +1,14 @@
-VERSION  ?= 0.1.0
+VERSION  ?= 0.3.0
 BIN       = bin/claude-monitor
 DIST      = dist
-LDFLAGS   = -s -w -X 'github.com/achton/claude-monitor-linux/internal/cli.AppVersion=$(VERSION)'
+
+# User-Agent sent to the usage endpoint. The endpoint is version-sensitive, so
+# this tracks a recent claude-code release and is stamped in at build time.
+USER_AGENT ?= claude-code/2.0.37
+
+LDFLAGS   = -s -w \
+  -X 'github.com/achton/claude-monitor-linux/internal/cli.AppVersion=$(VERSION)' \
+  -X 'github.com/achton/claude-monitor-linux/internal/api.UserAgent=$(USER_AGENT)'
 
 GO       ?= go
 RM       := rm -rf
@@ -36,7 +43,17 @@ vet:
 
 .PHONY: lint
 lint: vet
-	@command -v staticcheck >/dev/null && staticcheck ./... || echo "(staticcheck not installed; skipped)"
+	@command -v staticcheck >/dev/null 2>&1 || { \
+	  echo "staticcheck not found — install with:"; \
+	  echo "  go install honnef.co/go/tools/cmd/staticcheck@latest"; \
+	  exit 1; \
+	}
+	staticcheck ./...
+
+.PHONY: fmt-check
+fmt-check:
+	@out=$$(gofmt -l cmd internal); \
+	if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
 
 .PHONY: headless-test
 headless-test: $(BIN)

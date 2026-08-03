@@ -84,6 +84,7 @@ func Run(env *cli.Env, cfg config.Config) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go state.pollLoop(ctx)
+	go state.uiTickLoop(ctx)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -158,9 +159,20 @@ type state struct {
 	cfg  config.Config
 	ctx  context.Context
 
-	winMu             sync.Mutex
-	accountListWindow fyne.Window
+	winMu     sync.Mutex
+	dashboard *ui.Dashboard
+
+	menuMu    sync.Mutex
+	menuLines []string
+
+	iconMu   sync.Mutex
+	lastIcon []byte
 }
+
+// uiTick is how often the tray tooltip and menu countdowns are refreshed. They
+// render at minute granularity, so this only needs to be under a minute; the
+// poll interval (often 10 minutes) is far too coarse.
+const uiTick = 20 * time.Second
 
 func newState(env *cli.Env, app fyne.App, desk desktop.App, cfg config.Config) *state {
 	return &state{env: env, app: app, desk: desk, cfg: cfg, ctx: env.Ctx}
@@ -172,6 +184,7 @@ func (st *state) pollLoop(ctx context.Context) {
 	}
 	st.refreshIcon()
 	st.rebuildMenu()
+	st.refreshDashboard()
 
 	interval := time.Duration(st.cfg.Polling.IntervalSeconds) * time.Second
 	if interval < time.Minute {
@@ -189,29 +202,67 @@ func (st *state) pollLoop(ctx context.Context) {
 			}
 			st.refreshIcon()
 			st.rebuildMenu()
+			st.refreshDashboard()
 		}
 	}
 }
 
+// uiTickLoop keeps the countdowns in the tray menu current. Without it the menu
+// could show a value up to one poll interval out of date. The icon itself is not
+// refreshed here: its bars only move when a poll writes new data.
+func (st *state) uiTickLoop(ctx context.Context) {
+	t := time.NewTicker(uiTick)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			st.rebuildMenuIfChanged()
+		}
+	}
+}
+
+// refreshDashboard repopulates the dashboard if it has been opened, so a window
+// left on screen tracks each poll instead of showing whatever was current when
+// it was opened.
+func (st *state) refreshDashboard() {
+	st.winMu.Lock()
+	d := st.dashboard
+	st.winMu.Unlock()
+	if d != nil {
+		d.RefreshAsync()
+	}
+}
+
+// focusAccountList shows the dashboard, building it at most once per process.
+// Already running on the Fyne goroutine inside fyne.Do, so it calls Rebuild
+// directly rather than RefreshAsync (which would nest a fyne.Do).
 func (st *state) focusAccountList() {
 	fyne.Do(func() {
-		st.winMu.Lock()
-		w := st.accountListWindow
-		st.winMu.Unlock()
-		if w != nil {
-			w.Show()
-			w.RequestFocus()
-			return
-		}
-		nw := ui.NewAccountListWindow(st.app, st.env)
-		st.winMu.Lock()
-		st.accountListWindow = nw
-		st.winMu.Unlock()
-		nw.SetOnClosed(func() {
-			st.winMu.Lock()
-			st.accountListWindow = nil
-			st.winMu.Unlock()
-		})
-		nw.Show()
+		d := st.ensureDashboard()
+		d.Rebuild()
+		d.Window.Show()
+		d.Window.RequestFocus()
+		d.StartTimeUpdates()
 	})
+}
+
+// ensureDashboard returns the singleton dashboard, creating it on first use.
+// Must run on the Fyne goroutine.
+func (st *state) ensureDashboard() *ui.Dashboard {
+	st.winMu.Lock()
+	defer st.winMu.Unlock()
+	if st.dashboard != nil {
+		return st.dashboard
+	}
+	d := ui.NewDashboard(st.app, st.env)
+	// Hide rather than destroy on close: keeping the window and its GL context
+	// alive is what makes reopening instant.
+	d.Window.SetCloseIntercept(func() {
+		d.StopTimeUpdates()
+		d.Window.Hide()
+	})
+	st.dashboard = d
+	return d
 }

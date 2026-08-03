@@ -109,7 +109,7 @@ jobs:
         with:
           ref: ${{ steps.ref.outputs.ref }}
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true

@@ -12,6 +12,10 @@ A from-scratch Go implementation inspired by the macOS app
 re-architected for Linux conventions: XDG paths, freedesktop SNI tray,
 libnotify, distro packaging.
 
+<p align="center">
+  <img src="docs/dashboard.png" alt="Dashboard showing current limits, a close-calls summary and a 24h usage chart" width="480">
+</p>
+
 > **Status:** pre-stable (`v0.3.x`). See [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## How it works

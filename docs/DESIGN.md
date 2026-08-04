@@ -345,3 +345,6 @@ version` without DISPLAY/WAYLAND_DISPLAY/XDG_RUNTIME_DIR to verify.
 | 14 | Synthetic-row insert wrapped in `BEGIN IMMEDIATE` transaction + 60 s idempotency guard | No transaction (race) |
 | 15 | Headless CLI safety enforced by (a) import discipline in `cmd/claude-monitor/main.go` and (b) CI test under `env -i` | Trust fyne's import to remain side-effect-free indefinitely |
 | 16 | User-space install at `~/.local/bin/`; `.deb` + AppImage from v0.2.0 | System-wide `.deb` only; AppImage-first |
+| 17 | Limits keyed off the API's self-describing `limits[]` array, by `(kind, scope_model)` | Fixed fields per limit — v2's `weekly_sonnet_percent` went stale when the API dropped it |
+| 18 | v2 databases are migrated into the v3 tables, not wiped | Wipe-on-bump as before — but usage history is the product, so discarding it defeats the point |
+| 19 | `is_active` is stored raw and never displayed; "highest utilization" drives the icon and exit codes | Treating the undocumented flag as "the binding limit" in the UI |

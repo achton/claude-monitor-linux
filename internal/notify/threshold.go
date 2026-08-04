@@ -10,11 +10,17 @@ import (
 	"github.com/achton/claude-monitor-linux/internal/store"
 )
 
+// Sender is the notification sink. *Notifier implements it; tests substitute a
+// fake so evaluation can be exercised without a session bus.
+type Sender interface {
+	Send(appName, summary, body string, urgency Urgency) (uint32, error)
+}
+
 // Evaluator evaluates a usage reading against configured thresholds and fires
-// notifications via the Notifier, persisting debounce state in the store.
+// notifications via the Sender, persisting debounce state in the store.
 type Evaluator struct {
 	Store      *store.Store
-	Notifier   *Notifier
+	Notifier   Sender
 	Thresholds []int  // e.g. {75, 90, 95}; 100 (limit hit) is always evaluated
 	AppName    string // visible app name shown by the notification server
 }

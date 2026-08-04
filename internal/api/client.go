@@ -100,8 +100,7 @@ type oauthUsageBody struct {
 	FiveHour *oauthUsageWindow `json:"five_hour"`
 	SevenDay *oauthUsageWindow `json:"seven_day"`
 
-	Spend      *oauthSpend      `json:"spend"`
-	ExtraUsage *oauthExtraUsage `json:"extra_usage"`
+	Spend *oauthSpend `json:"spend"`
 }
 
 type oauthLimit struct {
@@ -136,10 +135,6 @@ type oauthSpend struct {
 	Percent  float64    `json:"percent"`
 	Severity string     `json:"severity"`
 	Enabled  bool       `json:"enabled"`
-}
-
-type oauthExtraUsage struct {
-	IsEnabled bool `json:"is_enabled"`
 }
 
 // limits converts the response into normalized Limits, preferring the

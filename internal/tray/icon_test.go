@@ -2,9 +2,15 @@ package tray
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/png"
 	"testing"
+	"time"
+
+	"github.com/achton/claude-monitor-linux/internal/api"
+	"github.com/achton/claude-monitor-linux/internal/cli"
+	"github.com/achton/claude-monitor-linux/internal/store"
 )
 
 func decodeIcon(t *testing.T, v iconValues) image.Image {
@@ -103,5 +109,47 @@ func TestIconClampsOutOfRangePercent(t *testing.T) {
 	}
 	if _, _, _, a := img.At(barPadX, barTop).RGBA(); a >= 0xF000 {
 		t.Error("negative session percent drew a fill")
+	}
+}
+
+func stateWithReading(t *testing.T, limits []api.Limit) *state {
+	t.Helper()
+	s, err := store.OpenInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	if _, err := s.InsertReading(ctx, nil, time.Now(), limits, "", false); err != nil {
+		t.Fatal(err)
+	}
+	return &state{env: &cli.Env{Ctx: ctx, Store: s}, ctx: ctx}
+}
+
+func TestIconNumbersSkipsUnusedScopedLimit(t *testing.T) {
+	base := []api.Limit{
+		{Kind: api.KindSession, Group: api.GroupSession, Percent: 40},
+		{Kind: api.KindWeeklyAll, Group: api.GroupWeekly, Percent: 25},
+	}
+	unused := append(base, api.Limit{
+		Kind: api.KindWeeklyScoped, Group: api.GroupWeekly, Percent: 0, ScopeModel: "Fable",
+	})
+	v, ok := stateWithReading(t, unused).iconNumbers()
+	if !ok {
+		t.Fatal("icon numbers unavailable")
+	}
+	if v.hasScoped {
+		t.Error("a scoped limit at 0% should not draw the rail")
+	}
+
+	used := append(base, api.Limit{
+		Kind: api.KindWeeklyScoped, Group: api.GroupWeekly, Percent: 3, ScopeModel: "Fable",
+	})
+	v, ok = stateWithReading(t, used).iconNumbers()
+	if !ok {
+		t.Fatal("icon numbers unavailable")
+	}
+	if !v.hasScoped || v.scopedUsage != 3 {
+		t.Errorf("scoped rail: hasScoped=%v at %.0f%%, want true at 3%%", v.hasScoped, v.scopedUsage)
 	}
 }

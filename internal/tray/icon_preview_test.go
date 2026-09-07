@@ -25,9 +25,10 @@ func TestRenderIconSamples(t *testing.T) {
 		{"07-weekly-critical", iconValues{30, 97, 60, true}},
 		{"08-scoped-critical", iconValues{40, 30, 97, true}},
 		{"09-all-critical", iconValues{96, 96, 96, true}},
-		{"10-zero", iconValues{0, 0, 0, true}},
-		{"11-full", iconValues{100, 100, 100, true}},
-		{"12-no-scoped-limit", iconValues{53, 7, 0, false}},
+		{"10-scoped-just-started", iconValues{30, 20, 2, true}},
+		{"11-zero", iconValues{0, 0, 0, false}},
+		{"12-full", iconValues{100, 100, 100, true}},
+		{"13-no-scoped-limit", iconValues{53, 7, 0, false}},
 	}
 	if err := os.MkdirAll("/tmp/cm-icon-preview", 0o755); err != nil {
 		t.Fatal(err)

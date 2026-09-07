@@ -34,6 +34,12 @@ func (r Reading) Session() (api.Limit, bool) { return r.Find(api.KindSession) }
 // Weekly returns the all-model weekly limit.
 func (r Reading) Weekly() (api.Limit, bool) { return r.Find(api.KindWeeklyAll) }
 
+// WeeklyScoped returns the model-scoped weekly limit with the highest
+// utilization. See api.UsageReading.WeeklyScoped.
+func (r Reading) WeeklyScoped() (api.Limit, bool) {
+	return api.UsageReading{Limits: r.Limits}.WeeklyScoped()
+}
+
 // PrimaryPercent is the highest utilization across all reported limits.
 func (r Reading) PrimaryPercent() float64 {
 	return api.UsageReading{Limits: r.Limits}.PrimaryPercent()

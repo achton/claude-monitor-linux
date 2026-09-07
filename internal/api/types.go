@@ -145,6 +145,25 @@ func (u UsageReading) Session() (Limit, bool) { return u.Find(KindSession) }
 // Weekly returns the all-model weekly limit.
 func (u UsageReading) Weekly() (Limit, bool) { return u.Find(KindWeeklyAll) }
 
+// WeeklyScoped returns the model-scoped weekly limit, e.g. "Weekly · Fable".
+// The scope is looked up by kind rather than by model name, so a rename on the
+// API side still resolves. When several models are scoped, the highest
+// utilization wins: the tray icon has room for one of them, and its job is to
+// show the nearest limit.
+func (u UsageReading) WeeklyScoped() (Limit, bool) {
+	var top Limit
+	found := false
+	for _, l := range u.Limits {
+		if l.Kind != KindWeeklyScoped {
+			continue
+		}
+		if !found || l.Percent > top.Percent {
+			top, found = l, true
+		}
+	}
+	return top, found
+}
+
 // PrimaryPercent is the highest utilization across all reported limits. It backs
 // the CLI exit code, which answers "how close am I to any limit".
 func (u UsageReading) PrimaryPercent() float64 {

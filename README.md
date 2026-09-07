@@ -16,7 +16,7 @@ libnotify, distro packaging.
   <img src="docs/dashboard.png" alt="Dashboard showing current limits, a close-calls summary and a 24h usage chart" width="480">
 </p>
 
-> **Status:** pre-stable (`v0.3.x`). See [`docs/DESIGN.md`](docs/DESIGN.md).
+> **Status:** pre-stable (`v0.4.x`). See [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## How it works
 

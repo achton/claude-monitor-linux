@@ -3,13 +3,13 @@ module github.com/achton/claude-monitor-linux
 go 1.25.0
 
 require (
-	fyne.io/fyne/v2 v2.8.0
-	fyne.io/systray v1.12.2
+	fyne.io/fyne/v2 v2.8.1
+	fyne.io/systray v1.12.3-0.20260810170012-af4e8e793ec4
 	github.com/BurntSushi/toml v1.6.0
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/wcharczuk/go-chart/v2 v2.1.2
 	golang.org/x/sys v0.47.0
-	modernc.org/sqlite v1.55.0
+	modernc.org/sqlite v1.57.0
 )
 
 require (
@@ -18,7 +18,6 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/fredbi/uri v1.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/fyne-io/gl-js v0.2.1-0.20260315212741-029c47fd27e8 // indirect
 	github.com/fyne-io/glfw-js v0.4.0 // indirect
@@ -34,7 +33,7 @@ require (
 	github.com/hack-pad/safejs v0.1.0 // indirect
 	github.com/jeandeaual/go-locale v0.0.0-20250612000132-0ef82f21eade // indirect
 	github.com/jsummers/gobmp v0.0.0-20230614200233-a9de23ed2e25 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
@@ -50,7 +49,7 @@ require (
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	modernc.org/libc v1.74.1 // indirect
+	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )

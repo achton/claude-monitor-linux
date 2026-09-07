@@ -300,3 +300,27 @@ func TestSpendFromRaw(t *testing.T) {
 		}
 	}
 }
+
+func TestWeeklyScoped(t *testing.T) {
+	none := UsageReading{Limits: []Limit{
+		{Kind: KindSession, Group: GroupSession, Percent: 50},
+		{Kind: KindWeeklyAll, Group: GroupWeekly, Percent: 20},
+	}}
+	if _, ok := none.WeeklyScoped(); ok {
+		t.Error("no scoped weekly limit should report absent")
+	}
+
+	// Several scoped models: the nearest limit is the one the icon shows.
+	many := UsageReading{Limits: []Limit{
+		{Kind: KindWeeklyAll, Group: GroupWeekly, Percent: 20},
+		{Kind: KindWeeklyScoped, Group: GroupWeekly, Percent: 12, ScopeModel: "Sonnet"},
+		{Kind: KindWeeklyScoped, Group: GroupWeekly, Percent: 71, ScopeModel: "Fable"},
+	}}
+	got, ok := many.WeeklyScoped()
+	if !ok {
+		t.Fatal("scoped weekly limit not found")
+	}
+	if got.ScopeModel != "Fable" || got.Percent != 71 {
+		t.Errorf("got %s at %.0f%%, want Fable at 71%%", got.ScopeModel, got.Percent)
+	}
+}

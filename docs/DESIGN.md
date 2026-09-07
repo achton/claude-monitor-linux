@@ -114,7 +114,7 @@ claude-monitor-linux/
 │   │   └── threshold.go            # Evaluator — fires at 75/90/95/rejected
 │   ├── tray/                       # Fyne tray + DBus service
 │   │   ├── tray.go                 # Run(), DBus surface, pollLoop ticker
-│   │   ├── icon.go                 # Two-bar PNG renderer
+│   │   ├── icon.go                 # Bars + scoped-limit rail PNG renderer
 │   │   ├── menu.go                 # SNI menu
 │   │   └── assets/
 │   ├── ui/                         # Fyne windows (dashboard, settings)
@@ -348,3 +348,4 @@ version` without DISPLAY/WAYLAND_DISPLAY/XDG_RUNTIME_DIR to verify.
 | 17 | Limits keyed off the API's self-describing `limits[]` array, by `(kind, scope_model)` | Fixed fields per limit — v2's `weekly_sonnet_percent` went stale when the API dropped it |
 | 18 | v2 databases are migrated into the v3 tables, not wiped | Wipe-on-bump as before — but usage history is the product, so discarding it defeats the point |
 | 19 | `is_active` is stored raw and never displayed; "highest utilization" drives the icon and exit codes | Treating the undocumented flag as "the binding limit" in the UI |
+| 20 | The tray icon draws the model-scoped weekly limit as a horizontal rail under the two vertical bars, and picks the scoped model with the highest utilization | A third identical vertical bar, or a second colour scale: colour already carries severity, so orientation is the free channel at 22px |

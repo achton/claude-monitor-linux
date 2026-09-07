@@ -30,7 +30,7 @@ func (st *state) refreshIcon() {
 	v, ok := st.iconNumbers()
 	iconBytes := brandIconPNG
 	if ok {
-		iconBytes = renderDuoBarIcon(v.sessionUsage, v.weeklyUsage)
+		iconBytes = renderUsageIcon(v)
 	}
 	// Push the icon only when the pixels actually change: some SNI hosts flicker
 	// on every SetSystemTrayIcon.
@@ -51,10 +51,13 @@ func (st *state) refreshIcon() {
 	})
 }
 
-// iconValues carries exactly what the icon draws: two bars.
+// iconValues carries exactly what the icon draws: two vertical bars and, when
+// the account has a model-scoped weekly limit, the rail under them.
 type iconValues struct {
 	sessionUsage float64
 	weeklyUsage  float64
+	scopedUsage  float64
+	hasScoped    bool
 }
 
 func (st *state) iconNumbers() (iconValues, bool) {
@@ -75,38 +78,79 @@ func (st *state) iconNumbers() (iconValues, bool) {
 	if l, ok := rec.Weekly(); ok {
 		v.weeklyUsage = l.Percent
 	}
+	if l, ok := rec.WeeklyScoped(); ok {
+		v.scopedUsage = l.Percent
+		v.hasScoped = true
+	}
 	return v, true
 }
 
-// renderDuoBarIcon draws a square-ish icon with two wide vertical bars:
-// 5h session usage on the left, 7d weekly usage on the right.
-func renderDuoBarIcon(sessionPct, weeklyPct float64) []byte {
-	const (
-		W, H      = 32, 32
-		barTop    = 4
-		barBottom = 28
-		barAreaH  = barBottom - barTop
-		barWidth  = 11
-	)
-	xs := [2]int{3, W - 3 - barWidth}
-	values := [2]float64{sessionPct, weeklyPct}
-	fills := [2]color.Color{colorForUsage(sessionPct), colorForUsage(weeklyPct)}
+// Icon geometry. Two vertical bars carry the 5h session (left) and 7d weekly
+// (right) limits; the model-scoped weekly limit is a horizontal rail below
+// them, filling left to right. Orientation, not colour, is what separates the
+// three at 22px: colour already encodes severity. Without a scoped limit the
+// bars use the full height and the rail is left out, which is the icon this
+// app drew before scoped limits existed.
+const (
+	iconW, iconH  = 32, 32
+	barPadX       = 3
+	barWidth      = 11
+	barTop        = 2
+	barBottom     = 23
+	railTop       = 26
+	railBottom    = 30
+	fullBarTop    = 4
+	fullBarBottom = 28
+)
 
-	img := image.NewRGBA(image.Rect(0, 0, W, H))
+// renderUsageIcon draws the tray icon as a PNG.
+func renderUsageIcon(v iconValues) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, iconW, iconH))
 	draw.Draw(img, img.Bounds(), &image.Uniform{C: color.Transparent}, image.Point{}, draw.Src)
 
+	top, bottom := barTop, barBottom
+	if !v.hasScoped {
+		top, bottom = fullBarTop, fullBarBottom
+	}
+	xs := [2]int{barPadX, iconW - barPadX - barWidth}
+	values := [2]float64{v.sessionUsage, v.weeklyUsage}
 	for i, x := range xs {
-		fillRect(img, x, barTop, x+barWidth, barBottom, trackColor)
-		frac := math.Max(0, math.Min(1, values[i]/100))
-		fillH := int(math.Round(float64(barAreaH) * frac))
-		if fillH > 0 {
-			fillRect(img, x, barBottom-fillH, x+barWidth, barBottom, fills[i])
-		}
+		drawBar(img, x, top, x+barWidth, bottom, values[i], fillUp)
+	}
+	if v.hasScoped {
+		drawBar(img, barPadX, railTop, iconW-barPadX, railBottom, v.scopedUsage, fillRight)
 	}
 
 	var buf bytes.Buffer
 	_ = png.Encode(&buf, img)
 	return buf.Bytes()
+}
+
+// fillDirection says which edge a bar's fill grows from.
+type fillDirection int
+
+const (
+	fillUp fillDirection = iota
+	fillRight
+)
+
+// drawBar paints one track and its fill, clamping the value to 0–100.
+func drawBar(img *image.RGBA, x0, y0, x1, y1 int, pct float64, dir fillDirection) {
+	fillRect(img, x0, y0, x1, y1, trackColor)
+	frac := math.Max(0, math.Min(1, pct/100))
+	c := colorForUsage(pct)
+	switch dir {
+	case fillUp:
+		h := int(math.Round(float64(y1-y0) * frac))
+		if h > 0 {
+			fillRect(img, x0, y1-h, x1, y1, c)
+		}
+	case fillRight:
+		w := int(math.Round(float64(x1-x0) * frac))
+		if w > 0 {
+			fillRect(img, x0, y0, x0+w, y1, c)
+		}
+	}
 }
 
 var trackColor = color.NRGBA{R: 0xB0, G: 0xAE, B: 0xA5, A: 0x55}

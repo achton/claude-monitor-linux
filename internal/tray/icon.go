@@ -52,7 +52,7 @@ func (st *state) refreshIcon() {
 }
 
 // iconValues carries exactly what the icon draws: two vertical bars and, when
-// the account has a model-scoped weekly limit, the rail under them.
+// the account has a model-scoped weekly limit in use, the rail under them.
 type iconValues struct {
 	sessionUsage float64
 	weeklyUsage  float64
@@ -78,7 +78,9 @@ func (st *state) iconNumbers() (iconValues, bool) {
 	if l, ok := rec.Weekly(); ok {
 		v.weeklyUsage = l.Percent
 	}
-	if l, ok := rec.WeeklyScoped(); ok {
+	// A scoped limit sitting at 0% earns no rail: the icon stays a clean pair of
+	// bars until the scoped model is actually used.
+	if l, ok := rec.WeeklyScoped(); ok && l.Percent > 0 {
 		v.scopedUsage = l.Percent
 		v.hasScoped = true
 	}
@@ -88,9 +90,9 @@ func (st *state) iconNumbers() (iconValues, bool) {
 // Icon geometry. Two vertical bars carry the 5h session (left) and 7d weekly
 // (right) limits; the model-scoped weekly limit is a horizontal rail below
 // them, filling left to right. Orientation, not colour, is what separates the
-// three at 22px: colour already encodes severity. Without a scoped limit the
-// bars use the full height and the rail is left out, which is the icon this
-// app drew before scoped limits existed.
+// three at 22px: colour already encodes severity. With no scoped limit, or one
+// still at 0%, the bars use the full height and the rail is left out, which is
+// the icon this app drew before scoped limits existed.
 const (
 	iconW, iconH  = 32, 32
 	barPadX       = 3

@@ -37,8 +37,9 @@ windows, and extra-usage credit spend.
 
 - **Tray icon** with two vertical bars for the 5h session and 7d weekly
   limits, plus a horizontal rail for the model-scoped weekly limit (for
-  example Fable). Every bar is colour-coded at 90/95%. Accounts without a
-  scoped limit get the two bars alone.
+  example Fable). Every bar is colour-coded at 90/95%. The rail appears once
+  that model has been used: at 0%, or with no scoped limit at all, the two bars
+  take the full height.
 - **Dashboard** listing every current limit with its countdown, a close-calls
   summary answering *when did I last come near a limit*, and a 24h/7d/30d chart
   with 75/90% guides. Countdowns tick live, and polling gaps render as dashed

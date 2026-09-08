@@ -10,4 +10,45 @@ if command -v gtk-update-icon-cache >/dev/null 2>&1; then
     gtk-update-icon-cache -qf /usr/share/icons/hicolor || true
 fi
 
+# Restart running trays, so they run the new binary. Each tray writes its PID
+# to $XDG_RUNTIME_DIR/claude-monitor.lock (see internal/xdg) and re-execs itself
+# on SIGHUP. The restart then happens inside the user's own session, which
+# matters because we run as root here and cannot rebuild DISPLAY or
+# DBUS_SESSION_BUS_ADDRESS. The rygel postinst uses the same approach.
+restart_running_trays() {
+    for lock in /run/user/*/claude-monitor.lock /tmp/claude-monitor-*.lock; do
+        [ -f "$lock" ] && [ ! -L "$lock" ] || continue
+
+        IFS= read -r pid < "$lock" 2>/dev/null || continue
+        case "$pid" in
+            '' | *[!0-9]*) continue ;;
+        esac
+
+        # A stale lock can name a PID that the kernel gave to another process.
+        # SIGHUP kills a process that does not handle it, so signal only a real
+        # claude-monitor ("claude-monitor" fits in the 15 bytes of comm).
+        [ "$(cat "/proc/$pid/comm" 2>/dev/null)" = "claude-monitor" ] || continue
+
+        # /tmp is world-writable. The lock and the process it names must share
+        # an owner, or any user can point root at any tray.
+        lock_uid=$(stat -c %u "$lock" 2>/dev/null) || continue
+        proc_uid=$(stat -c %u "/proc/$pid" 2>/dev/null) || continue
+        [ "$lock_uid" = "$proc_uid" ] || continue
+
+        # A tray from an older build has no handler, and SIGHUP kills it. We
+        # cannot test for the handler, so the tray declares it. See decision 21
+        # in docs/DESIGN.md.
+        if ! grep -qx 'restart=sighup' "$lock" 2>/dev/null; then
+            echo "claude-monitor: tray $pid predates automatic restart, leaving it alone; restart it to pick up this version."
+            continue
+        fi
+
+        kill -HUP "$pid" 2>/dev/null || true
+    done
+}
+
+if [ "$1" = "configure" ] && [ -z "${DPKG_ROOT:-}" ]; then
+    restart_running_trays || true
+fi
+
 exit 0

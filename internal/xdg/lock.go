@@ -11,6 +11,10 @@ import (
 // ErrLocked is returned when the lock is already held by another process.
 var ErrLocked = errors.New("lock is held by another process")
 
+// RestartMarker is the line MarkRestartable writes and packaging/deb/postinst
+// looks for. TestPostinstReadsTheRestartMarker keeps the two in step.
+const RestartMarker = "restart=sighup"
+
 // Lock is an advisory exclusive flock on LockPath().
 type Lock struct {
 	f *os.File
@@ -34,10 +38,35 @@ func AcquireLock() (*Lock, error) {
 		}
 		return nil, fmt.Errorf("flock: %w", err)
 	}
-	// Write our PID for diagnostic purposes.
-	_ = f.Truncate(0)
-	_, _ = f.WriteAt([]byte(fmt.Sprintf("%d\n", os.Getpid())), 0)
-	return &Lock{f: f}, nil
+	l := &Lock{f: f}
+	// The PID alone is enough for diagnostics. MarkRestartable adds the
+	// restart marker later, once the tray can act on a signal.
+	_ = l.writeBody(fmt.Sprintf("%d\n", os.Getpid()))
+	return l, nil
+}
+
+// MarkRestartable tells the .deb postinst that this process re-execs itself on
+// SIGHUP instead of dying. The postinst cannot test for the handler, so the
+// tray must declare it. See decision 21 in docs/DESIGN.md. Call this only once
+// the handler is installed.
+func (l *Lock) MarkRestartable() error {
+	if l == nil || l.f == nil {
+		return nil
+	}
+	return l.writeBody(fmt.Sprintf("%d\n%s\n", os.Getpid(), RestartMarker))
+}
+
+// writeBody replaces the contents of the lock file. The format is a contract
+// with packaging/deb/postinst. The PID is on the first line, and RestartMarker
+// is on the second.
+func (l *Lock) writeBody(body string) error {
+	if err := l.f.Truncate(0); err != nil {
+		return fmt.Errorf("truncate lock file: %w", err)
+	}
+	if _, err := l.f.WriteAt([]byte(body), 0); err != nil {
+		return fmt.Errorf("write lock file: %w", err)
+	}
+	return nil
 }
 
 // Release releases the lock and removes the lock file.

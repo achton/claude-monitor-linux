@@ -5,6 +5,7 @@ dist/
 *.AppDir/
 *.zsync
 coverage.out
+.build-stamp
 .idea/
 .vscode/
 .claude/

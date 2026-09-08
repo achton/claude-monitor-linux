@@ -297,6 +297,25 @@ modern distros (Ubuntu 22.04+, Debian 12+, Fedora 38+, Arch, etc.).
 Releases. Building from source needs the Wayland dev headers as well as the X11
 ones: GLFW 3.4 (via Fyne 2.8) compiles both backends regardless of session type.
 
+Installing the `.deb` restarts a running tray, so the new binary takes effect
+without a logout. `packaging/deb/postinst` reads the PID from each
+`$XDG_RUNTIME_DIR/claude-monitor.lock` and sends SIGHUP to it. The tray answers
+SIGHUP by re-execing itself (`internal/tray/restart.go`), so the restart happens
+inside the user's own session. dpkg runs maintainer scripts as root, without
+`DISPLAY` or `DBUS_SESSION_BUS_ADDRESS`, so root cannot start a session process
+itself.
+
+The postinst only signals a tray whose lock carries a `restart=sighup` marker.
+The tray writes that marker once its handler is installed
+(`xdg.Lock.MarkRestartable`). A tray from an older build has no handler, and
+SIGHUP kills a process that does not handle it. The postinst cannot test for the
+handler either, because the Go runtime catches SIGHUP whether or not the program
+asked for it, which makes `/proc/PID/status` read the same in both cases.
+
+AppImage has no install hook, so an upgrade there needs a manual restart.
+`kill -HUP` works, and the handler re-execs `$APPIMAGE`, because
+`/proc/self/exe` points into a squashfs mount that disappears on exec.
+
 ## 10. Headless CLI safety
 
 The bare CLI must work with `DISPLAY` and `WAYLAND_DISPLAY` unset. This is
@@ -349,3 +368,4 @@ version` without DISPLAY/WAYLAND_DISPLAY/XDG_RUNTIME_DIR to verify.
 | 18 | v2 databases are migrated into the v3 tables, not wiped | Wipe-on-bump as before — but usage history is the product, so discarding it defeats the point |
 | 19 | `is_active` is stored raw and never displayed; "highest utilization" drives the icon and exit codes | Treating the undocumented flag as "the binding limit" in the UI |
 | 20 | The tray icon draws the model-scoped weekly limit as a horizontal rail under the two vertical bars, picks the scoped model with the highest utilization, and hides the rail while that limit reads 0% | A third identical vertical bar, or a second colour scale: colour already carries severity, so orientation is the free channel at 22px |
+| 21 | `.deb` upgrades restart the tray with SIGHUP: the postinst signals the PID in the runtime lock, and only when the lock carries the `restart=sighup` marker, so a tray from an older build survives the upgrade | A signal that defaults to ignore (SIGWINCH) needs no marker, but then a terminal resize also restarts a foreground tray. A systemd user unit with `deb-systemd-invoke --user` restarts only what systemd started, and the tray starts from an XDG autostart entry or the app menu. `pkill`/`pidof` name matching, as rygel does, also kills a concurrent `claude-monitor status` in a status-bar loop. Notify-only "restart to update", as Chrome and VS Code do |

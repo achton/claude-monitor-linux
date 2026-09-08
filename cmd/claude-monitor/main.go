@@ -150,9 +150,11 @@ func detachAndExec(extraArgs []string) int {
 		fmt.Fprintf(os.Stderr, "detach: start: %s\n", err)
 		return 1
 	}
+	// Release sets Process.Pid to -1, so read the PID first.
+	pid := cmd.Process.Pid
 	if err := cmd.Process.Release(); err != nil {
 		fmt.Fprintf(os.Stderr, "detach: release: %s\n", err)
 	}
-	fmt.Fprintf(os.Stdout, "claude-monitor tray detached (pid %d)\n", cmd.Process.Pid)
+	fmt.Fprintf(os.Stdout, "claude-monitor tray detached (pid %d)\n", pid)
 	return 0
 }

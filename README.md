@@ -77,6 +77,10 @@ backends.
 installs to `/usr/bin`; if you also have a copy in `~/.local/bin`, whichever
 comes first on `PATH` wins — keep one.
 
+Installing the `.deb` restarts a running tray, so the new version takes effect
+at once. After you replace an AppImage, restart the tray yourself with
+`kill -HUP $(head -1 $XDG_RUNTIME_DIR/claude-monitor.lock)`.
+
 ## Quick start
 
 Requires Claude Code installed and logged in — that's where the token comes from.

@@ -29,9 +29,18 @@ all: build
 .PHONY: build
 build: $(BIN)
 
-$(BIN): $(shell find . -name '*.go' -not -path './bin/*')
+$(BIN): $(shell find . -name '*.go' -not -path './bin/*') .build-stamp
 	@$(MKDIR) bin
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/claude-monitor
+
+# VERSION and USER_AGENT are stamped into the binary via ldflags, so changing
+# either has to force a relink even when no source file moved. The stamp's
+# mtime only advances when its contents change, which keeps ordinary
+# incremental builds incremental.
+.PHONY: force
+.build-stamp: force
+	@printf '%s %s' "$(VERSION)" "$(USER_AGENT)" > $@.tmp; \
+	 cmp -s $@.tmp $@ || mv $@.tmp $@; $(RM) $@.tmp
 
 .PHONY: test
 test:
@@ -124,7 +133,7 @@ install: build icons manpage
 
 .PHONY: clean
 clean:
-	$(RM) bin/ dist/ assets/icons/ packaging/claude-monitor.1.gz
+	$(RM) bin/ dist/ assets/icons/ packaging/claude-monitor.1.gz .build-stamp
 
 .PHONY: run
 run: build

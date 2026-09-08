@@ -57,12 +57,8 @@ func Run(env *cli.Env, cfg config.Config) error {
 	}
 	defer lock.Release()
 
-	reply, err := conn.RequestName(dbusName, dbus.NameFlagDoNotQueue)
-	if err != nil {
-		return fmt.Errorf("dbus request name: %w", err)
-	}
-	if reply != dbus.RequestNameReplyPrimaryOwner {
-		return fmt.Errorf("dbus name %s already owned", dbusName)
+	if err := requestName(conn, wasRestarted()); err != nil {
+		return err
 	}
 
 	a := fyneapp.NewWithID("org.claude_monitor")
@@ -87,12 +83,28 @@ func Run(env *cli.Env, cfg config.Config) error {
 	go state.uiTickLoop(ctx)
 
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
-		<-sig
-		cmlog.Logger().Info("tray: signal received, shutting down")
-		fyne.Do(a.Quit)
+		for s := range sig {
+			if s == syscall.SIGHUP {
+				// The postinst sends SIGHUP after it unpacks a new
+				// binary. This call returns only on failure.
+				if err := reexec(); err != nil {
+					cmlog.Logger().Warn("tray: restart failed, staying up", "err", err)
+					continue
+				}
+			}
+			cmlog.Logger().Info("tray: signal received, shutting down", "signal", s.String())
+			fyne.Do(a.Quit)
+			return
+		}
 	}()
+
+	// Announce the restart only now that the handler runs. The postinst must
+	// never signal a tray that the signal kills.
+	if err := lock.MarkRestartable(); err != nil {
+		cmlog.Logger().Warn("tray: cannot advertise restart support", "err", err)
+	}
 
 	a.Run()
 	return nil
@@ -110,6 +122,31 @@ func nameHasOwner(conn *dbus.Conn, name string) bool {
 func callFocus(conn *dbus.Conn) error {
 	obj := conn.Object(dbusName, dbus.ObjectPath(dbusPath))
 	return obj.Call(dbusInterface+".Focus", 0).Err
+}
+
+// requestName claims the well-known bus name. After a re-exec another owner
+// can still hold it for a moment, because the bus handles the old socket close
+// asynchronously. We already hold the single-instance lock at this point, so no
+// other tray can be a real owner, and the wait is safe. A cold start still
+// fails at once.
+func requestName(conn *dbus.Conn, restarted bool) error {
+	deadline := time.Now()
+	if restarted {
+		deadline = deadline.Add(2 * time.Second)
+	}
+	for {
+		reply, err := conn.RequestName(dbusName, dbus.NameFlagDoNotQueue)
+		if err != nil {
+			return fmt.Errorf("dbus request name: %w", err)
+		}
+		if reply == dbus.RequestNameReplyPrimaryOwner {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("dbus name %s already owned", dbusName)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func handleNoSNI(env *cli.Env, conn *dbus.Conn) error {

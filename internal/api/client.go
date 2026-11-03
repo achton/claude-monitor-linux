@@ -83,7 +83,8 @@ func (c *Client) OAuthUsage(ctx context.Context, token string) (UsageReading, er
 // SpendFromRaw extracts the credit-spend block from a stored raw response body.
 // Spend is money rather than a percentage, so it is read back from raw_data for
 // display instead of being denormalised into its own columns; its percentage is
-// already tracked as a limit and carries the history.
+// already tracked as a limit and carries the history. ok is false when there
+// is nothing to show: no spend block, or spend off without a reason.
 func SpendFromRaw(raw string) (Spend, bool) {
 	if raw == "" {
 		return Spend{}, false
@@ -93,7 +94,27 @@ func SpendFromRaw(raw string) (Spend, bool) {
 		return Spend{}, false
 	}
 	s := parsed.spend()
-	return s, s.Enabled
+	return s, s.Enabled || s.DisabledReason != ""
+}
+
+// SharesFromRaw maps scoped limit keys to their share of the weekly limit,
+// read from a stored raw response body.
+func SharesFromRaw(raw string) map[string]WeeklyShare {
+	var parsed oauthUsageBody
+	if raw == "" || json.Unmarshal([]byte(raw), &parsed) != nil {
+		return nil
+	}
+	out := map[string]WeeklyShare{}
+	for _, s := range parsed.WeeklyScopedShares {
+		if s.LimitIndex < 0 || s.LimitIndex >= len(parsed.Limits) {
+			continue
+		}
+		out[parsed.Limits[s.LimitIndex].toLimit().Key()] = WeeklyShare{
+			UsedPercent:      s.UsedPercentOfWeekly,
+			AllowancePercent: s.AllowancePercentOfWeekly,
+		}
+	}
+	return out
 }
 
 type oauthUsageBody struct {
@@ -106,6 +127,12 @@ type oauthUsageBody struct {
 	SevenDay *oauthUsageWindow `json:"seven_day"`
 
 	Spend *oauthSpend `json:"spend"`
+
+	WeeklyScopedShares []struct {
+		LimitIndex               int     `json:"limit_index"`
+		UsedPercentOfWeekly      float64 `json:"used_percent_of_weekly"`
+		AllowancePercentOfWeekly float64 `json:"allowance_percent_of_weekly"`
+	} `json:"weekly_scoped_shares"`
 }
 
 type oauthLimit struct {
@@ -138,11 +165,12 @@ type oauthMoney struct {
 }
 
 type oauthSpend struct {
-	Used     oauthMoney `json:"used"`
-	Limit    oauthMoney `json:"limit"`
-	Percent  float64    `json:"percent"`
-	Severity string     `json:"severity"`
-	Enabled  bool       `json:"enabled"`
+	Used           oauthMoney `json:"used"`
+	Limit          oauthMoney `json:"limit"`
+	Percent        float64    `json:"percent"`
+	Severity       string     `json:"severity"`
+	Enabled        bool       `json:"enabled"`
+	DisabledReason string     `json:"disabled_reason"`
 }
 
 // limits converts the response into normalized Limits, preferring the
@@ -151,16 +179,7 @@ func (b oauthUsageBody) limits() []Limit {
 	if len(b.Limits) > 0 {
 		out := make([]Limit, 0, len(b.Limits))
 		for _, l := range b.Limits {
-			out = append(out, Limit{
-				Kind:         l.Kind,
-				Group:        l.Group,
-				Percent:      l.Percent,
-				Severity:     l.Severity,
-				ResetsAt:     parseTime(l.ResetsAt),
-				IsActive:     l.IsActive,
-				ScopeModel:   l.scopeModel(),
-				ScopeSurface: l.scopeSurface(),
-			})
+			out = append(out, l.toLimit())
 		}
 		return dedupeLimits(out)
 	}
@@ -181,6 +200,19 @@ func (b oauthUsageBody) limits() []Limit {
 		})
 	}
 	return out
+}
+
+func (l oauthLimit) toLimit() Limit {
+	return Limit{
+		Kind:         l.Kind,
+		Group:        l.Group,
+		Percent:      l.Percent,
+		Severity:     l.Severity,
+		ResetsAt:     parseTime(l.ResetsAt),
+		IsActive:     l.IsActive,
+		ScopeModel:   l.scopeModel(),
+		ScopeSurface: l.scopeSurface(),
+	}
 }
 
 func (l oauthLimit) scopeModel() string {
@@ -234,12 +266,13 @@ func (b oauthUsageBody) spend() Spend {
 		return Spend{}
 	}
 	return Spend{
-		Enabled:       b.Spend.Enabled,
-		Currency:      b.Spend.Limit.Currency,
-		DecimalPlaces: b.Spend.Limit.Exponent,
-		UsedMinor:     b.Spend.Used.AmountMinor,
-		LimitMinor:    b.Spend.Limit.AmountMinor,
-		Percent:       b.Spend.Percent,
+		Enabled:        b.Spend.Enabled,
+		Currency:       b.Spend.Limit.Currency,
+		DecimalPlaces:  b.Spend.Limit.Exponent,
+		UsedMinor:      b.Spend.Used.AmountMinor,
+		LimitMinor:     b.Spend.Limit.AmountMinor,
+		Percent:        b.Spend.Percent,
+		DisabledReason: b.Spend.DisabledReason,
 	}
 }
 

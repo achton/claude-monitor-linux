@@ -40,7 +40,8 @@ windows, and extra-usage credit spend.
   example Fable). Every bar is colour-coded at 90/95%. The rail appears once
   that model has been used: at 0%, or with no scoped limit at all, the two bars
   take the full height.
-- **Dashboard** listing every current limit with its countdown, a close-calls
+- **Dashboard** listing your plan and every current limit with its countdown
+  (a model-scoped limit also shows its share of the weekly limit), a close-calls
   summary answering *when did I last come near a limit*, and a 24h/7d/30d chart
   with 75/90% guides. Countdowns tick live, and polling gaps render as dashed
   bridges rather than as invented data.

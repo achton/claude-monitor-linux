@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -95,6 +96,24 @@ type Spend struct {
 	UsedMinor     int64
 	LimitMinor    int64
 	Percent       float64
+	// DisabledReason says why extra usage is off, e.g. "out_of_credits".
+	DisabledReason string
+}
+
+// OffReason renders why extra usage is off, e.g. "out of credits". Empty when
+// it is on or the API gave no reason.
+func (s Spend) OffReason() string {
+	if s.Enabled {
+		return ""
+	}
+	return strings.ReplaceAll(s.DisabledReason, "_", " ")
+}
+
+// WeeklyShare is how much of the weekly limit a scoped limit has used, and how
+// much of it that scope may use.
+type WeeklyShare struct {
+	UsedPercent      float64 `json:"used_percent"`
+	AllowancePercent float64 `json:"allowance_percent"`
 }
 
 // Summary renders the credit balance as money, e.g. "0.00 of 50.00 EUR".

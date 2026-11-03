@@ -163,7 +163,10 @@ func extractCCCredentials(raw []byte) (Credentials, error) {
 		c.Token = ccStringField(sec, "accessToken", "access_token")
 		c.ExpiresAt = ccExpiry(sec, "expiresAt", "expires_at")
 		c.SignInExpiresAt = ccExpiry(sec, "refreshTokenExpiresAt", "refresh_token_expires_at")
-		c.Label = labelFromCCJSON(sec)
+		c.Label = accountName(sec)
+		if c.Label == "" {
+			c.Label = planLabel(sec)
+		}
 	}
 	if c.Token == "" {
 		tok, ok := ccWalkForToken(v)
@@ -236,11 +239,44 @@ func unixMsOrSec(n int64) time.Time {
 	}
 }
 
-func labelFromCCJSON(v any) string {
+// accountName is the account's email or name, when the JSON carries one.
+func accountName(v any) string {
 	if e := ccWalkForString(v, []string{"email", "userEmail", "user_email"}); e != "" {
 		return e
 	}
-	if name := ccWalkForString(v, []string{"accountName", "account_name", "organizationName", "organization_name", "displayName"}); name != "" {
+	return ccWalkForString(v, []string{"accountName", "account_name", "organizationName", "organization_name", "displayName"})
+}
+
+// planLabel names the plan from Claude's OAuth section, e.g. "Claude Team ·
+// Max 5x" for subscriptionType "team" and rateLimitTier
+// "default_claude_max_5x". Empty when the section names no plan.
+func planLabel(sec map[string]any) string {
+	sub := titleWords(ccStringField(sec, "subscriptionType", "subscription_type"))
+	tier := ccStringField(sec, "rateLimitTier", "rate_limit_tier")
+	tier = strings.TrimPrefix(tier, "default_")
+	tier = titleWords(strings.TrimPrefix(tier, "claude_"))
+	switch {
+	case sub == "" && tier == "":
+		return ""
+	case sub == "" || strings.HasPrefix(tier, sub+" "):
+		return "Claude " + tier
+	case tier == "" || tier == sub:
+		return "Claude " + sub
+	}
+	return "Claude " + sub + " · " + tier
+}
+
+// titleWords turns "max_5x" into "Max 5x".
+func titleWords(s string) string {
+	words := strings.Fields(strings.ReplaceAll(s, "_", " "))
+	for i, w := range words {
+		words[i] = strings.ToUpper(w[:1]) + w[1:]
+	}
+	return strings.Join(words, " ")
+}
+
+func labelFromCCJSON(v any) string {
+	if name := accountName(v); name != "" {
 		return name
 	}
 	if sub := ccWalkForString(v, []string{"subscriptionType", "subscription_type", "plan"}); sub != "" {

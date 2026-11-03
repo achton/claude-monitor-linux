@@ -32,12 +32,13 @@ type Poller struct {
 	// expired token.
 	pollMu sync.Mutex
 
-	mu          sync.Mutex
-	refreshErr  string
-	lastError   string
-	lastAttempt time.Time
-	lastSuccess time.Time
-	label       string
+	mu               sync.Mutex
+	rateLimitedUntil time.Time
+	refreshErr       string
+	lastError        string
+	lastAttempt      time.Time
+	lastSuccess      time.Time
+	label            string
 
 	suppressFirstNotify bool
 }
@@ -55,11 +56,38 @@ func (p *Poller) Status() (label, lastError string, lastAttempt, lastSuccess tim
 	return p.label, p.lastError, p.lastAttempt, p.lastSuccess
 }
 
+// defaultRateLimitBackoff applies when a 429 carries no Retry-After.
+const defaultRateLimitBackoff = 5 * time.Minute
+
+// RateLimitedError reports that polls are paused until Until, after the usage
+// endpoint answered 429.
+type RateLimitedError struct{ Until time.Time }
+
+func (e *RateLimitedError) Error() string {
+	return "usage endpoint rate-limited until " + e.Until.Local().Format("15:04")
+}
+
+// RateLimitedUntil returns when polling resumes, or the zero time when it is
+// not paused.
+func (p *Poller) RateLimitedUntil() time.Time {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if time.Now().Before(p.rateLimitedUntil) {
+		return p.rateLimitedUntil
+	}
+	return time.Time{}
+}
+
 // PollNow runs one poll synchronously. Safe to call from multiple goroutines.
+// While the endpoint is rate-limiting, it returns a RateLimitedError without
+// sending a request.
 func (p *Poller) PollNow(ctx context.Context) error {
 	p.pollMu.Lock()
 	defer p.pollMu.Unlock()
 
+	if until := p.RateLimitedUntil(); !until.IsZero() {
+		return &RateLimitedError{Until: until}
+	}
 	p.mu.Lock()
 	p.lastAttempt = time.Now()
 	p.mu.Unlock()
@@ -83,6 +111,19 @@ func (p *Poller) PollNow(ctx context.Context) error {
 			creds = fresh
 			r, err = p.API.OAuthUsage(ctx, creds.Token)
 		}
+	}
+	var rl *api.ErrRateLimited
+	if errors.As(err, &rl) {
+		wait := rl.RetryAfter
+		if wait <= 0 {
+			wait = defaultRateLimitBackoff
+		}
+		rerr := &RateLimitedError{Until: time.Now().Add(wait)}
+		p.mu.Lock()
+		p.rateLimitedUntil = rerr.Until
+		p.mu.Unlock()
+		p.setError(rerr.Error())
+		return rerr
 	}
 	if err != nil {
 		p.setError(p.describePollError(err, creds))

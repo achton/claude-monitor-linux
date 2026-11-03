@@ -214,7 +214,9 @@ func (d *Dashboard) buildBody() fyne.CanvasObject {
 	}
 
 	parts := []fyne.CanvasObject{}
-	if lastErr != "" {
+	if until := env.Poller.RateLimitedUntil(); !until.IsZero() {
+		parts = append(parts, buildRateLimitBanner(until, rec.Timestamp))
+	} else if lastErr != "" {
 		parts = append(parts, buildPollErrorBanner(env, lastErr, rec.Timestamp, d.RefreshAsync))
 	}
 
@@ -531,6 +533,24 @@ func buildPollErrorBanner(env *cli.Env, lastErr string, lastTimestamp time.Time,
 	inner := container.NewVBox(title, detail, container.NewHBox(retry))
 	padded := container.NewPadded(inner)
 	return container.NewStack(bg, padded)
+}
+
+// buildRateLimitBanner replaces the error banner while the usage endpoint is
+// rate-limiting: nothing is broken, so it offers no retry or /login hint.
+func buildRateLimitBanner(until, lastTimestamp time.Time) fyne.CanvasObject {
+	bg := canvas.NewRectangle(color.NRGBA{R: 0xD9, G: 0x77, B: 0x57, A: 0x26})
+	bg.StrokeColor = color.NRGBA{R: 0xD9, G: 0x77, B: 0x57, A: 0x99}
+	bg.StrokeWidth = 1
+
+	title := widget.NewLabelWithStyle("Usage data paused until "+until.Format("15:04"),
+		fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	body := "The usage endpoint is rate-limiting requests."
+	if !lastTimestamp.IsZero() {
+		body += " Figures below are " + agoText(time.Since(lastTimestamp)) + "."
+	}
+	detail := widget.NewLabel(body)
+	detail.Wrapping = fyne.TextWrapWord
+	return container.NewStack(bg, container.NewPadded(container.NewVBox(title, detail)))
 }
 
 func compactDuration(d time.Duration) string {

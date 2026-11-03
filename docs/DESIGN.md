@@ -160,6 +160,7 @@ api.Client.OAuthUsage(ctx, token)
          severity, resets_at, scope.model, scope.surface); fall back to five_hour/seven_day
          when limits[] is absent
   → 401: return ErrUnauthorized; refresh as above and retry once
+  → 429: return ErrRateLimited; skip polls until Retry-After (default 5 min)
   → other: return ErrHTTP
   ↓
 WithTx:

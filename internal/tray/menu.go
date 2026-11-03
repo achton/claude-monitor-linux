@@ -75,8 +75,8 @@ func (st *state) applyMenu(force bool) {
 
 // currentStatusLines returns one disabled menu item per reported limit, so the
 // menu shows everything the API reports rather than a fixed session/weekly
-// pair. Returns nil when there is no data. The last line gains a "⚠ stale"
-// suffix when the latest poll failed.
+// pair. Returns nil when there is no data. A last line flags a failing or
+// rate-limited poll.
 func (st *state) currentStatusLines() []string {
 	rec, err := st.env.Store.LatestReading(st.ctx)
 	if err != nil || len(rec.Limits) == 0 {
@@ -98,7 +98,9 @@ func (st *state) currentStatusLines() []string {
 		lines = append(lines, line)
 	}
 
-	if _, lastErr, _, _ := st.env.Poller.Status(); lastErr != "" {
+	if until := st.env.Poller.RateLimitedUntil(); !until.IsZero() {
+		lines = append(lines, "⏸ rate-limited until "+until.Format("15:04"))
+	} else if _, lastErr, _, _ := st.env.Poller.Status(); lastErr != "" {
 		lines = append(lines, "⚠ polls failing — numbers are stale")
 	}
 	return lines

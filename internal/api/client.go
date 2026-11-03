@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -56,6 +57,10 @@ func (c *Client) OAuthUsage(ctx context.Context, token string) (UsageReading, er
 	case http.StatusOK:
 	case http.StatusUnauthorized:
 		return UsageReading{}, ErrUnauthorized
+	case http.StatusTooManyRequests:
+		return UsageReading{}, &ErrRateLimited{
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
+		}
 	default:
 		return UsageReading{}, &ErrHTTP{Status: resp.StatusCode, Body: string(body)}
 	}
@@ -260,6 +265,20 @@ func (b oauthUsageBody) spendLimit() (Limit, bool) {
 		Percent:  b.Spend.Percent,
 		Severity: severity,
 	}, true
+}
+
+// parseRetryAfter reads delay-seconds or an HTTP date. Zero when absent.
+func parseRetryAfter(v string, now time.Time) time.Duration {
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil && t.After(now) {
+		return t.Sub(now)
+	}
+	return 0
 }
 
 func parseTime(s string) time.Time {

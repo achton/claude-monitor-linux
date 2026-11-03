@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func serveBody(t *testing.T, body string) *httptest.Server {
@@ -378,5 +379,34 @@ func TestOAuthUsage_DuplicateKeysKeepHighest(t *testing.T) {
 	}
 	if len(r.Limits) != 1 || r.Limits[0].Percent != 70 {
 		t.Errorf("got %+v, want one limit at 70%%", r.Limits)
+	}
+}
+
+func TestOAuthUsage_RateLimited(t *testing.T) {
+	for _, tc := range []struct {
+		header string
+		want   time.Duration
+	}{
+		{"120", 2 * time.Minute},
+		{"", 0},
+		{time.Now().Add(time.Hour).UTC().Format(http.TimeFormat), time.Hour},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if tc.header != "" {
+				w.Header().Set("Retry-After", tc.header)
+			}
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		c := &Client{HTTPClient: http.DefaultClient, BaseURL: srv.URL}
+		_, err := c.OAuthUsage(context.Background(), "tok")
+		srv.Close()
+
+		var rl *ErrRateLimited
+		if !errors.As(err, &rl) {
+			t.Fatalf("Retry-After %q: got %v, want ErrRateLimited", tc.header, err)
+		}
+		if d := rl.RetryAfter - tc.want; d < -2*time.Second || d > 2*time.Second {
+			t.Errorf("Retry-After %q: got %v, want %v", tc.header, rl.RetryAfter, tc.want)
+		}
 	}
 }

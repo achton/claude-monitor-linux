@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -16,19 +17,45 @@ type Credentials struct {
 	Token     string
 	Label     string
 	ExpiresAt time.Time // zero when the file carries no expiry
+	// SignInExpiresAt is when the refresh token expires, after which Claude
+	// Code needs `claude /login`. Zero when unknown.
+	SignInExpiresAt time.Time
 }
 
-// Expired reports whether the recorded expiry has passed. Always false when the
-// file carries no expiry, so an unknown schema never blocks a poll attempt.
+// Expired reports whether the access token's expiry has passed. Always false
+// when the file carries no expiry, so an unknown schema never blocks a poll.
 func (c Credentials) Expired() bool {
 	return !c.ExpiresAt.IsZero() && time.Now().After(c.ExpiresAt)
 }
 
-// ReadClaudeCodeCredentials reads ~/.claude/.credentials.json (or one of the
-// conventional fallbacks) and returns the live Claude access token plus a
-// friendly account label. Empty explicitPath uses defaults.
-func ReadClaudeCodeCredentials(explicitPath string) (Credentials, error) {
-	path, err := resolveCCPath(explicitPath)
+// SignInExpired reports whether the refresh token has expired.
+func (c Credentials) SignInExpired() bool {
+	return !c.SignInExpiresAt.IsZero() && time.Now().After(c.SignInExpiresAt)
+}
+
+// ClaudeConfigDir returns Claude Code's config directory: configured when set,
+// else $CLAUDE_CONFIG_DIR. Empty means the default locations.
+func ClaudeConfigDir(configured string) string {
+	if configured != "" {
+		return expandHome(configured)
+	}
+	return os.Getenv("CLAUDE_CONFIG_DIR")
+}
+
+func expandHome(p string) string {
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, p[1:])
+		}
+	}
+	return p
+}
+
+// ReadClaudeCodeCredentials reads .credentials.json from Claude Code's config
+// directory (see ClaudeConfigDir) and returns the live Claude access token plus
+// a friendly account label.
+func ReadClaudeCodeCredentials(configDir string) (Credentials, error) {
+	path, err := resolveCCPath(configDir)
 	if err != nil {
 		return Credentials{}, err
 	}
@@ -46,9 +73,9 @@ func CredentialsFileExists() bool {
 	return err == nil
 }
 
-func resolveCCPath(explicit string) (string, error) {
-	if explicit != "" {
-		return explicit, nil
+func resolveCCPath(configDir string) (string, error) {
+	if dir := ClaudeConfigDir(configDir); dir != "" {
+		return filepath.Join(dir, ".credentials.json"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -134,7 +161,8 @@ func extractCCCredentials(raw []byte) (Credentials, error) {
 	var c Credentials
 	if sec, ok := ccOAuthSection(v); ok {
 		c.Token = ccStringField(sec, "accessToken", "access_token")
-		c.ExpiresAt = ccExpiry(sec)
+		c.ExpiresAt = ccExpiry(sec, "expiresAt", "expires_at")
+		c.SignInExpiresAt = ccExpiry(sec, "refreshTokenExpiresAt", "refresh_token_expires_at")
 		c.Label = labelFromCCJSON(sec)
 	}
 	if c.Token == "" {
@@ -176,10 +204,10 @@ func ccStringField(m map[string]any, keys ...string) string {
 	return ""
 }
 
-// ccExpiry reads expiresAt, which Claude Code writes as a Unix timestamp in
+// ccExpiry reads a timestamp field, which Claude Code writes as Unix
 // milliseconds. Returns the zero time when absent or unparseable.
-func ccExpiry(m map[string]any) time.Time {
-	for _, k := range []string{"expiresAt", "expires_at"} {
+func ccExpiry(m map[string]any, keys ...string) time.Time {
+	for _, k := range keys {
 		switch n := m[k].(type) {
 		case float64:
 			return unixMsOrSec(int64(n))

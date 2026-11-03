@@ -80,6 +80,10 @@ func main() {
 		ev = nil
 	}
 	pl := poller.New(s, apiClient, ev)
+	pl.ConfigDir = cfg.Claude.ConfigDir
+	if cfg.Claude.RefreshExpiredToken {
+		pl.Refresher = &poller.Refresher{Path: cfg.Claude.CLIPath, ConfigDir: cfg.Claude.ConfigDir}
+	}
 
 	env := &cli.Env{
 		Ctx:    context.Background(),

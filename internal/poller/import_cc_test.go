@@ -183,11 +183,12 @@ func TestExtractErrors(t *testing.T) {
 }
 
 func TestReadClaudeCodeCredentialsFromFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".credentials.json")
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".credentials.json")
 	if err := os.WriteFile(path, []byte(realWorldCredentials(futureMillis())), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c, err := ReadClaudeCodeCredentials(path)
+	c, err := ReadClaudeCodeCredentials(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,5 +208,32 @@ func TestSnakeCaseSchema(t *testing.T) {
 	}
 	if c.Label != "Claude Code (pro)" {
 		t.Errorf("label: got %q", c.Label)
+	}
+}
+
+func TestConfigDirResolution(t *testing.T) {
+	envDir, cfgDir := t.TempDir(), t.TempDir()
+	write := func(dir, token string) {
+		t.Helper()
+		body := fmt.Sprintf(`{"claudeAiOauth": {"accessToken": %q, "refreshTokenExpiresAt": 1787929062700}}`, token)
+		if err := os.WriteFile(filepath.Join(dir, ".credentials.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(envDir, "from-env")
+	write(cfgDir, "from-config")
+	t.Setenv("CLAUDE_CONFIG_DIR", envDir)
+
+	c, err := ReadClaudeCodeCredentials("")
+	if err != nil || c.Token != "from-env" {
+		t.Fatalf("env dir: got %q, %v", c.Token, err)
+	}
+	if c.SignInExpiresAt.UnixMilli() != 1787929062700 {
+		t.Errorf("sign-in expiry: got %v", c.SignInExpiresAt)
+	}
+
+	c, err = ReadClaudeCodeCredentials(cfgDir)
+	if err != nil || c.Token != "from-config" {
+		t.Fatalf("configured dir should win: got %q, %v", c.Token, err)
 	}
 }

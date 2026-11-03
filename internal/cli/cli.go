@@ -68,8 +68,9 @@ EXIT CODES (status)
     30  >= 95%% (critical)
     1   error (no data, network)
 
-Authentication is read live from ~/.claude/.credentials.json on every poll.
-Run `+"`claude /login`"+` (Claude Code) if you see an unauthorized error.
+Authentication is read live from Claude Code's .credentials.json on every
+poll, in $CLAUDE_CONFIG_DIR or ~/.claude. An expired token is refreshed by
+running `+"`claude auth status`"+`. Run `+"`claude /login`"+` if the sign-in expired.
 `)
 	return 0
 }

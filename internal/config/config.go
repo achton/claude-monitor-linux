@@ -17,6 +17,20 @@ type Config struct {
 	Polling       PollingConfig       `toml:"polling"`
 	Notifications NotificationsConfig `toml:"notifications"`
 	Logging       LoggingConfig       `toml:"logging"`
+	Claude        ClaudeConfig        `toml:"claude"`
+}
+
+// ClaudeConfig locates Claude Code, whose credentials the app reads.
+type ClaudeConfig struct {
+	// ConfigDir is Claude Code's config directory. Empty uses
+	// $CLAUDE_CONFIG_DIR, then ~/.claude.
+	ConfigDir string `toml:"config_dir"`
+	// CLIPath is the claude binary. Empty searches PATH and the usual
+	// install locations.
+	CLIPath string `toml:"cli_path"`
+	// RefreshExpiredToken runs `claude auth status` when the access token
+	// has expired, which makes Claude Code refresh it.
+	RefreshExpiredToken bool `toml:"refresh_expired_token"`
 }
 
 type PollingConfig struct {
@@ -42,6 +56,7 @@ func Default() Config {
 			Thresholds: []int{75, 90, 95},
 		},
 		Logging: LoggingConfig{Level: "info"},
+		Claude:  ClaudeConfig{RefreshExpiredToken: true},
 	}
 }
 

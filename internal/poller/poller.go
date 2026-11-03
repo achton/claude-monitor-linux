@@ -23,7 +23,17 @@ type Poller struct {
 	API       *api.Client
 	Evaluator *notify.Evaluator // optional; nil disables notification eval
 
+	// ConfigDir is Claude Code's config directory; see ClaudeConfigDir.
+	ConfigDir string
+	// Refresher refreshes an expired access token. Optional.
+	Refresher *Refresher
+
+	// pollMu serializes PollNow, so concurrent callers never race on an
+	// expired token.
+	pollMu sync.Mutex
+
 	mu          sync.Mutex
+	refreshErr  string
 	lastError   string
 	lastAttempt time.Time
 	lastSuccess time.Time
@@ -47,18 +57,35 @@ func (p *Poller) Status() (label, lastError string, lastAttempt, lastSuccess tim
 
 // PollNow runs one poll synchronously. Safe to call from multiple goroutines.
 func (p *Poller) PollNow(ctx context.Context) error {
+	p.pollMu.Lock()
+	defer p.pollMu.Unlock()
+
 	p.mu.Lock()
 	p.lastAttempt = time.Now()
 	p.mu.Unlock()
 
-	creds, err := ReadClaudeCodeCredentials("")
+	creds, err := ReadClaudeCodeCredentials(p.ConfigDir)
 	if err != nil {
 		p.setError("no Claude Code credentials: " + err.Error())
 		return err
 	}
+	if p.Evaluator != nil {
+		_ = p.Evaluator.EvaluateSignIn(ctx, creds.Label, creds.SignInExpiresAt)
+	}
+
+	refreshed := false
+	if creds.Expired() {
+		creds, refreshed = p.refresh(ctx, creds)
+	}
 	r, err := p.API.OAuthUsage(ctx, creds.Token)
+	if errors.Is(err, api.ErrUnauthorized) && !refreshed {
+		if fresh, ok := p.refresh(ctx, creds); ok {
+			creds = fresh
+			r, err = p.API.OAuthUsage(ctx, creds.Token)
+		}
+	}
 	if err != nil {
-		p.setError(describePollError(err, creds))
+		p.setError(p.describePollError(err, creds))
 		return err
 	}
 
@@ -70,6 +97,7 @@ func (p *Poller) PollNow(ctx context.Context) error {
 	p.mu.Lock()
 	p.label = creds.Label
 	p.lastError = ""
+	p.refreshErr = ""
 	p.lastSuccess = time.Now()
 	suppress := p.suppressFirstNotify
 	p.suppressFirstNotify = false
@@ -81,14 +109,57 @@ func (p *Poller) PollNow(ctx context.Context) error {
 	return nil
 }
 
+// refresh asks Claude Code for a new access token and rereads the credentials.
+// ok is false when no new token came of it.
+func (p *Poller) refresh(ctx context.Context, old Credentials) (Credentials, bool) {
+	if p.Refresher == nil || old.SignInExpired() {
+		return old, false
+	}
+	err := p.Refresher.Refresh(ctx)
+	// Reread even when throttled: an earlier refresh may have finished since.
+	if creds, rerr := ReadClaudeCodeCredentials(p.ConfigDir); rerr == nil && creds.Token != old.Token {
+		p.setRefreshErr("")
+		cmlog.Logger().Info("access token refreshed via claude")
+		return creds, true
+	}
+	switch {
+	case errors.Is(err, ErrRefreshThrottled):
+		return old, false
+	case err == nil:
+		err = errors.New("claude auth status left the token unchanged")
+	}
+	p.setRefreshErr(err.Error())
+	cmlog.Logger().Warn("token refresh via claude failed", "err", err)
+	return old, false
+}
+
+func (p *Poller) setRefreshErr(msg string) {
+	p.mu.Lock()
+	p.refreshErr = msg
+	p.mu.Unlock()
+}
+
 // describePollError turns a bare 401 into something actionable: the usual cause
 // is an access token Claude Code has not refreshed yet, not a revoked account.
-func describePollError(err error, creds Credentials) string {
-	if errors.Is(err, api.ErrUnauthorized) && creds.Expired() {
-		return fmt.Sprintf("Claude Code access token expired %s ago — run any Claude Code command to refresh it",
-			time.Since(creds.ExpiresAt).Round(time.Minute))
+func (p *Poller) describePollError(err error, creds Credentials) string {
+	if !errors.Is(err, api.ErrUnauthorized) {
+		return err.Error()
 	}
-	return err.Error()
+	if creds.SignInExpired() {
+		return "Claude Code sign-in expired: run `claude /login`"
+	}
+	if !creds.Expired() {
+		return err.Error()
+	}
+	msg := fmt.Sprintf("Claude Code access token expired %s ago: run any Claude Code command to refresh it",
+		time.Since(creds.ExpiresAt).Round(time.Minute))
+	p.mu.Lock()
+	refreshErr := p.refreshErr
+	p.mu.Unlock()
+	if refreshErr != "" {
+		msg += " (automatic refresh failed: " + refreshErr + ")"
+	}
+	return msg
 }
 
 // setError records the failure and logs it. Logging here rather than only in

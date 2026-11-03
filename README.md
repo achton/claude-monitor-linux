@@ -123,7 +123,7 @@ below 75%, 10 ≥75%, 20 ≥90%, 30 ≥95%, and 1 on error.
 ## File layout (per-user)
 
 ```
-~/.claude/.credentials.json                 # read-only, owned by Claude Code
+~/.claude/.credentials.json                 # owned by Claude Code; $CLAUDE_CONFIG_DIR moves it
 ~/.local/share/claude-monitor/usage.db      # SQLite WAL, 0600 (history only)
 ~/.config/claude-monitor/config.toml        # TOML config, 0600
 ~/.local/state/claude-monitor/debug.log     # slog JSON, 0600
@@ -154,8 +154,24 @@ as a banner in the dashboard.
 **"no Claude Code credentials"** — Claude Code isn't installed, or isn't logged
 in. Run `claude /login`.
 
-**"access token expired"** — Claude Code refreshes its token as you use it; run
-any Claude Code command and the next poll recovers.
+**"access token expired"**: Claude Code refreshes its token as you use it. When
+it hasn't, the app runs `claude auth status` (Claude Code 2.1.317 or later),
+which refreshes it. If that fails, the banner says why; run any Claude Code
+command and the next poll recovers.
+
+**"sign-in expired"**: run `claude /login`. A notification warns three days
+ahead.
+
+**Claude Code uses another config directory**: the app follows
+`$CLAUDE_CONFIG_DIR`. A tray started at login may not see that variable, so set
+it in the config file instead:
+
+```toml
+[claude]
+config_dir = "~/.claude-work"
+cli_path = ""                  # claude binary; empty searches PATH and common locations
+refresh_expired_token = true
+```
 
 **"unauthorized"** — the token was rejected outright. Run `claude /login`.
 

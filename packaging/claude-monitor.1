@@ -70,8 +70,9 @@ Error: no data, network failure, no Claude Code credentials file, etc.
 .SH FILES
 .TP
 \fI~/.claude/.credentials.json\fR
-Claude Code's OAuth credentials file. Read on every poll. Not modified by
-claude-monitor.
+Claude Code's OAuth credentials file, in \fB$CLAUDE_CONFIG_DIR\fR when set. Read
+on every poll. When the token has expired, claude-monitor runs
+\fIclaude auth status\fR so that Claude Code refreshes it.
 .TP
 \fI~/.local/share/claude-monitor/usage.db\fR
 SQLite database (WAL). Holds only the usage history timeline. Permissions

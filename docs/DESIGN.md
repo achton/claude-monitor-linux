@@ -46,8 +46,10 @@ store removes the bug class entirely. See decision #1 in the log.
   this; the user uses `claude /login`.
 - Multiple polling endpoints / fallbacks / state machines. One endpoint, one
   shape. If it fails, surface the error and retry on the next tick.
-- Pre-rotation watching, fsnotify, refresh-token flows. The next poll
+- Pre-rotation watching, fsnotify, our own refresh-token flow. The next poll
   (≤ 10 min) reads the file again, so any rotation is picked up automatically.
+  An expired token is refreshed by running `claude auth status`, never by
+  using the refresh token directly (decision #22).
 - Account autodetection from JSONL logs, secret-service storage, internationalization,
   remote telemetry.
 
@@ -144,17 +146,20 @@ tick (every cfg.Polling.IntervalSeconds, min 60s)
   ↓
 poller.PollNow(ctx)
   ↓
-ReadClaudeCodeToken("")
-  → resolveCCPath() — tries ~/.claude/.credentials.json then a couple fallbacks
+ReadClaudeCodeCredentials(cfg.Claude.ConfigDir)
+  → resolveCCPath() — config_dir, then $CLAUDE_CONFIG_DIR, then
+    ~/.claude/.credentials.json and a couple of fallbacks
   → readCredentialsFileWithRetry() — retries once on truncated read
   → extractCCCredentials(json) — walks the JSON for accessToken + label
+  → sign-in (refresh token) expiring within 3 days: notify once
+  → access token expired: Refresher runs `claude auth status`, rereads
   ↓
 api.Client.OAuthUsage(ctx, token)
   → GET /api/oauth/usage with Bearer + anthropic-beta: oauth-2025-04-20
   → 200: parse the self-describing limits[] array (kind, group, percent,
          severity, resets_at, scope.model, scope.surface); fall back to five_hour/seven_day
          when limits[] is absent
-  → 401: return ErrUnauthorized
+  → 401: return ErrUnauthorized; refresh as above and retry once
   → other: return ErrHTTP
   ↓
 WithTx:
@@ -279,6 +284,11 @@ thresholds = [75, 90, 95]
 
 [logging]
 level = "info"  # debug | info | warn | error
+
+[claude]
+config_dir = ""                # empty: $CLAUDE_CONFIG_DIR, then ~/.claude
+cli_path = ""                  # empty: PATH, then common install locations
+refresh_expired_token = true
 ```
 
 No multi-account knobs, no pinned-account setting, no adaptive throttling
@@ -372,3 +382,5 @@ version` without DISPLAY/WAYLAND_DISPLAY/XDG_RUNTIME_DIR to verify.
 | 19 | `is_active` is stored raw and never displayed; "highest utilization" drives the icon and exit codes | Treating the undocumented flag as "the binding limit" in the UI |
 | 20 | The tray icon draws the model-scoped weekly limit as a horizontal rail under the two vertical bars, picks the scoped model with the highest utilization, and hides the rail while that limit reads 0% | A third identical vertical bar, or a second colour scale: colour already carries severity, so orientation is the free channel at 22px |
 | 21 | `.deb` upgrades restart the tray with SIGHUP: the postinst signals the PID in the runtime lock, and only when the lock carries the `restart=sighup` marker, so a tray from an older build survives the upgrade | A signal that defaults to ignore (SIGWINCH) needs no marker, but then a terminal resize also restarts a foreground tray. A systemd user unit with `deb-systemd-invoke --user` restarts only what systemd started, and the tray starts from an XDG autostart entry or the app menu. `pkill`/`pidof` name matching, as rygel does, also kills a concurrent `claude-monitor status` in a status-bar loop. Notify-only "restart to update", as Chrome and VS Code do |
+| 22 | An expired access token is refreshed by running `claude auth status` (Claude Code ≥ 2.1.317), throttled to once per 15 min and never signalled, so it always finishes saving the token; polls are serialized so concurrent callers share one refresh | Leave it to the user (the monitor went blind whenever Claude Code sat idle); call the OAuth refresh endpoint ourselves, which rotates the refresh token outside Claude Code's lock and signs the user out |
+| 23 | Credentials are found via `[claude] config_dir`, then `$CLAUDE_CONFIG_DIR`, then `~/.claude` | Environment only, which a tray started from XDG autostart usually lacks |

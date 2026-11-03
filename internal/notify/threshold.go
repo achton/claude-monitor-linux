@@ -40,7 +40,7 @@ func (e *Evaluator) EvaluateReading(ctx context.Context, accountLabel string, r 
 	for _, l := range r.Limits {
 		if l.Percent >= 100 {
 			_ = e.fireIfNew(ctx, accountLabel, l, 100,
-				fmt.Sprintf("%s limit hit (rate-limited)", l.Label()))
+				fmt.Sprintf("%s reached (rate-limited)", l.Label()))
 			continue
 		}
 		// Highest crossed threshold only, so one poll never fires 75/90/95 at once.

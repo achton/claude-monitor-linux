@@ -96,7 +96,7 @@ func printPlain(env *Env, v StatusView) {
 		fmt.Fprintf(env.Stdout, "LLM %.0f%% (RATE LIMITED) — %s\n", v.PrimaryPercent, v.AccountName)
 	} else {
 		fmt.Fprintf(env.Stdout,
-			"LLM %.0f%% (session %.0f%%, weekly %.0f%%; resets %s) — %s\n",
+			"LLM %.0f%% (5-hour %.0f%%, weekly %.0f%%; resets %s) — %s\n",
 			v.PrimaryPercent, v.SessionPercent, v.WeeklyPercent, v.SessionResetIn, v.AccountName,
 		)
 	}

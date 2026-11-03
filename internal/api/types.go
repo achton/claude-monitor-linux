@@ -47,25 +47,26 @@ func (l Limit) Key() string {
 	return l.Kind
 }
 
-// Label is the human-readable name shown in the UI, tray and CLI.
+// Label is the human-readable name shown in the UI, tray and CLI. It follows
+// Claude Code's wording, e.g. "5-hour limit" and "Weekly Fable limit".
 func (l Limit) Label() string {
-	base := ""
 	switch l.Kind {
 	case KindSession:
-		base = "Session (5h)"
+		return "5-hour limit"
 	case KindWeeklyAll:
-		base = "Weekly (7d)"
+		return "Weekly limit"
 	case KindWeeklyScoped:
-		base = "Weekly"
+		if l.ScopeModel != "" {
+			return "Weekly " + l.ScopeModel + " limit"
+		}
+		return "Weekly limit"
 	case KindSpend:
-		base = "Extra usage"
-	default:
-		base = l.Kind
+		return "Extra usage"
 	}
 	if l.ScopeModel != "" {
-		return base + " · " + l.ScopeModel
+		return l.Kind + " · " + l.ScopeModel
 	}
-	return base
+	return l.Kind
 }
 
 // Spend describes the extra-usage credit balance, which is reported in money
@@ -139,13 +140,13 @@ func (u UsageReading) ResetsAtFor(key string) time.Time {
 	return time.Time{}
 }
 
-// Session returns the 5-hour session limit.
+// Session returns the 5-hour limit.
 func (u UsageReading) Session() (Limit, bool) { return u.Find(KindSession) }
 
 // Weekly returns the all-model weekly limit.
 func (u UsageReading) Weekly() (Limit, bool) { return u.Find(KindWeeklyAll) }
 
-// WeeklyScoped returns the model-scoped weekly limit, e.g. "Weekly · Fable".
+// WeeklyScoped returns the model-scoped weekly limit, e.g. "Weekly Fable limit".
 // The scope is looked up by kind rather than by model name, so a rename on the
 // API side still resolves. When several models are scoped, the highest
 // utilization wins: the tray icon has room for one of them, and its job is to

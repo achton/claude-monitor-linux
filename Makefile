@@ -1,10 +1,10 @@
-VERSION  ?= 0.3.0
+VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)
 BIN       = bin/claude-monitor
 DIST      = dist
 
 # User-Agent sent to the usage endpoint. The endpoint is version-sensitive, so
 # this tracks a recent claude-code release and is stamped in at build time.
-USER_AGENT ?= claude-code/2.0.37
+USER_AGENT ?= claude-code/2.1.317
 
 LDFLAGS   = -s -w \
   -X 'github.com/achton/claude-monitor-linux/internal/cli.AppVersion=$(VERSION)' \

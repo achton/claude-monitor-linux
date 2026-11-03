@@ -72,7 +72,7 @@ func TestScopedLimitRoundTrip(t *testing.T) {
 	if scoped.ScopeModel != "Fable" || scoped.Percent != 12 {
 		t.Errorf("scoped: got %+v", scoped)
 	}
-	if scoped.Label() != "Weekly · Fable" {
+	if scoped.Label() != "Weekly Fable limit" {
 		t.Errorf("label: got %q", scoped.Label())
 	}
 }

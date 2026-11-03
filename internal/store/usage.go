@@ -28,7 +28,7 @@ func (r Reading) Find(key string) (api.Limit, bool) {
 	return api.Limit{}, false
 }
 
-// Session returns the 5-hour session limit.
+// Session returns the 5-hour limit.
 func (r Reading) Session() (api.Limit, bool) { return r.Find(api.KindSession) }
 
 // Weekly returns the all-model weekly limit.

@@ -70,13 +70,13 @@ func TestEvaluatesEveryLimit(t *testing.T) {
 		t.Fatalf("notifications: got %d, want 2 (session + scoped):\n%s", len(f.msgs), f.bodies())
 	}
 	got := f.bodies()
-	for _, want := range []string{"Session (5h)", "Weekly · Fable"} {
+	for _, want := range []string{"5-hour limit", "Weekly Fable limit"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q:\n%s", want, got)
 		}
 	}
 	// The limit below every threshold stays quiet.
-	if strings.Contains(got, "Weekly (7d)") {
+	if strings.Contains(got, "Weekly limit at") {
 		t.Errorf("weekly at 12%% should not alert:\n%s", got)
 	}
 }

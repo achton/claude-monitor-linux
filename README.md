@@ -30,12 +30,12 @@ run `claude /login`; the next poll picks it up.
 
 Limits come from the API's self-describing `limits` array, keyed by kind and
 model scope, so a limit Anthropic adds or renames shows up without an update.
-Today that means the 5h session window, the 7d weekly window, per-model weekly
+Today that means the 5-hour limit, the weekly limit, per-model weekly
 windows, and extra-usage credit spend.
 
 ## Features
 
-- **Tray icon** with two vertical bars for the 5h session and 7d weekly
+- **Tray icon** with two vertical bars for the 5-hour and weekly
   limits, plus a horizontal rail for the model-scoped weekly limit (for
   example Fable). Every bar is colour-coded at 90/95%. The rail appears once
   that model has been used: at 0%, or with no scoped limit at all, the two bars

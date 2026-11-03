@@ -35,21 +35,38 @@ type Limit struct {
 	ResetsAt   time.Time // zero when the limit has no reset (e.g. spend)
 	IsActive   bool      // raw passthrough of the API's flag; not used for display
 	ScopeModel string    // e.g. "Fable"; empty when the limit is unscoped
+	// ScopeSurface names the product surface a limit applies to; empty when
+	// the limit covers every surface.
+	ScopeSurface string
 }
 
 // Key is a stable identifier for one limit across polls. Notification debounce
 // and chart series are keyed on it, so a scoped limit must not collide with the
 // unscoped limit of the same kind.
 func (l Limit) Key() string {
+	k := l.Kind
 	if l.ScopeModel != "" {
-		return l.Kind + ":" + l.ScopeModel
+		k += ":" + l.ScopeModel
 	}
-	return l.Kind
+	if l.ScopeSurface != "" {
+		k += "@" + l.ScopeSurface
+	}
+	return k
 }
+
+// Scoped reports whether the limit applies to one model or surface only.
+func (l Limit) Scoped() bool { return l.ScopeModel != "" || l.ScopeSurface != "" }
 
 // Label is the human-readable name shown in the UI, tray and CLI. It follows
 // Claude Code's wording, e.g. "5-hour limit" and "Weekly Fable limit".
 func (l Limit) Label() string {
+	if l.ScopeSurface != "" {
+		return l.modelLabel() + " · " + l.ScopeSurface
+	}
+	return l.modelLabel()
+}
+
+func (l Limit) modelLabel() string {
 	switch l.Kind {
 	case KindSession:
 		return "5-hour limit"
@@ -202,13 +219,13 @@ func SortLimits(limits []Limit) {
 		if ga, gb := groupRank(a.Group), groupRank(b.Group); ga != gb {
 			return ga < gb
 		}
-		if (a.ScopeModel == "") != (b.ScopeModel == "") {
-			return a.ScopeModel == ""
+		if a.Scoped() != b.Scoped() {
+			return !a.Scoped()
 		}
 		if a.Kind != b.Kind {
 			return a.Kind < b.Kind
 		}
-		return a.ScopeModel < b.ScopeModel
+		return a.Key() < b.Key()
 	})
 }
 

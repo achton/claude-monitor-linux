@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/achton/claude-monitor-linux/internal/api"
 )
 
 // v2Schema is the shape shipped in v0.2.x, recreated here so the migration is
@@ -212,5 +214,130 @@ func TestPreV2IsWiped(t *testing.T) {
 	}
 	if n != 0 {
 		t.Error("pre-v2 tables should be wiped")
+	}
+}
+
+const v3UsageLimit = `
+CREATE TABLE usage_reading (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp    TEXT NOT NULL,
+    raw_data     TEXT,
+    is_synthetic INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE usage_limit (
+    reading_id  INTEGER NOT NULL REFERENCES usage_reading(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL,
+    limit_group TEXT NOT NULL,
+    scope_model TEXT NOT NULL DEFAULT '',
+    percent     REAL NOT NULL,
+    severity    TEXT NOT NULL DEFAULT 'normal',
+    resets_at   TEXT,
+    is_active   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (reading_id, kind, scope_model)
+);
+CREATE INDEX idx_limit_reading ON usage_limit(reading_id);
+INSERT INTO usage_reading (timestamp) VALUES ('2026-10-01T12:00:00Z');
+INSERT INTO usage_limit VALUES (1, 'session', 'session', '', 20, 'normal', NULL, 0);
+INSERT INTO usage_limit VALUES (1, 'weekly_scoped', 'weekly', 'Fable', 12, 'normal', NULL, 0);
+PRAGMA user_version = 3;
+`
+
+func TestMigrateV3AddsSurface(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(v3UsageLimit); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	s, err := openAt(path)
+	if err != nil {
+		t.Fatalf("open after v3: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	r, err := s.LatestReading(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Limits) != 2 {
+		t.Fatalf("limits after migration: got %d, want 2", len(r.Limits))
+	}
+	if _, ok := r.Find("weekly_scoped:Fable"); !ok {
+		t.Error("scoped limit lost in migration")
+	}
+
+	// Two limits that differ only by surface now fit in one reading.
+	limits := []api.Limit{
+		{Kind: api.KindWeeklyScoped, Group: api.GroupWeekly, Percent: 1, ScopeSurface: "Cowork"},
+		{Kind: api.KindWeeklyScoped, Group: api.GroupWeekly, Percent: 2, ScopeSurface: "Desktop"},
+	}
+	if _, err := s.InsertReading(ctx, nil, time.Now(), limits, "", false); err != nil {
+		t.Fatalf("insert surface-scoped limits: %v", err)
+	}
+	r, err = s.LatestReading(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.Find("weekly_scoped@Desktop"); !ok {
+		t.Errorf("surface limit not round-tripped: %+v", r.Limits)
+	}
+}
+
+// Processes that open a v3 database at the same time must migrate it once:
+// a second migration would rebuild usage_limit without scope_surface.
+func TestConcurrentOpensMigrateOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Databases the app created are already in WAL mode.
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL;` + v3UsageLimit); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	const n = 6
+	start := make(chan struct{})
+	errs := make(chan error, n)
+	for i := range n {
+		go func() {
+			<-start
+			s, err := openAt(path)
+			if err != nil {
+				errs <- fmt.Errorf("open %d: %w", i, err)
+				return
+			}
+			defer s.Close()
+			_, err = s.InsertReading(context.Background(), nil, time.Now(), []api.Limit{{
+				Kind: api.KindWeeklyScoped, Group: api.GroupWeekly, Percent: 1,
+				ScopeSurface: fmt.Sprintf("surface-%d", i),
+			}}, "", false)
+			errs <- err
+		}()
+	}
+	close(start)
+	for range n {
+		if err := <-errs; err != nil {
+			t.Error(err)
+		}
+	}
+
+	s, err := openAt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var surfaces int
+	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM usage_limit WHERE scope_surface != ''`).Scan(&surfaces); err != nil {
+		t.Fatal(err)
+	}
+	if surfaces != n {
+		t.Errorf("surface-scoped rows: got %d, want %d", surfaces, n)
 	}
 }

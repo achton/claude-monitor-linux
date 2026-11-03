@@ -152,7 +152,7 @@ ReadClaudeCodeToken("")
 api.Client.OAuthUsage(ctx, token)
   → GET /api/oauth/usage with Bearer + anthropic-beta: oauth-2025-04-20
   → 200: parse the self-describing limits[] array (kind, group, percent,
-         severity, resets_at, scope.model); fall back to five_hour/seven_day
+         severity, resets_at, scope.model, scope.surface); fall back to five_hour/seven_day
          when limits[] is absent
   → 401: return ErrUnauthorized
   → other: return ErrHTTP
@@ -186,7 +186,7 @@ flips to false for the rest of the process lifetime.
 
 ## 6. Data model
 
-### `usage_reading` + `usage_limit` (schema v3)
+### `usage_reading` + `usage_limit` (schema v4)
 
 ```sql
 CREATE TABLE usage_reading (
@@ -197,15 +197,16 @@ CREATE TABLE usage_reading (
 );
 
 CREATE TABLE usage_limit (
-    reading_id  INTEGER NOT NULL REFERENCES usage_reading(id) ON DELETE CASCADE,
-    kind        TEXT NOT NULL,          -- 'session' | 'weekly_all' | 'weekly_scoped' | 'spend' | ...
-    limit_group TEXT NOT NULL,
-    scope_model TEXT NOT NULL DEFAULT '',
-    percent     REAL NOT NULL,
-    severity    TEXT NOT NULL DEFAULT 'normal',
-    resets_at   TEXT,
-    is_active   INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (reading_id, kind, scope_model)
+    reading_id    INTEGER NOT NULL REFERENCES usage_reading(id) ON DELETE CASCADE,
+    kind          TEXT NOT NULL,        -- 'session' | 'weekly_all' | 'weekly_scoped' | 'spend' | ...
+    limit_group   TEXT NOT NULL,
+    scope_model   TEXT NOT NULL DEFAULT '',
+    scope_surface TEXT NOT NULL DEFAULT '',
+    percent       REAL NOT NULL,
+    severity      TEXT NOT NULL DEFAULT 'normal',
+    resets_at     TEXT,
+    is_active     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (reading_id, kind, scope_model, scope_surface)
 );
 ```
 
@@ -213,8 +214,9 @@ One `usage_reading` per poll (plus synthetic pairs at reset boundaries), and one
 `usage_limit` row per limit the API reported. Percentages live only in
 `usage_limit`: the set of limits is open-ended, so fixed columns per limit go
 stale — v2 carried a `weekly_sonnet_percent` that the API stopped reporting.
-Limits are keyed by `(kind, scope_model)` so a model-scoped weekly limit does not
-collide with the unscoped one. `is_active` is stored as a raw passthrough and is
+Limits are keyed by `(kind, scope_model, scope_surface)` so a scoped weekly limit
+does not collide with the unscoped one. Two limits that still share a key are
+collapsed to the higher one at parse time. `is_active` is stored as a raw passthrough and is
 deliberately not used for display. No `account_id` — single-account by
 construction.
 
@@ -237,7 +239,8 @@ GC'd when `reset_timestamp < now`.
 
 ### Schema versioning
 
-`PRAGMA user_version` tracks `schemaVersion = 3`. On open, v2 databases are
+`PRAGMA user_version` tracks `schemaVersion = 4`. On open, v3 databases have
+`usage_limit` rebuilt with `scope_surface` in its primary key. v2 databases are
 *migrated*: their fixed-column readings are copied into `usage_reading` +
 `usage_limit` rows, then `usage_history` is dropped. Usage history is the point
 of the app, so it is preserved rather than discarded. `weekly_sonnet_percent` is
@@ -364,8 +367,8 @@ version` without DISPLAY/WAYLAND_DISPLAY/XDG_RUNTIME_DIR to verify.
 | 14 | Synthetic-row insert wrapped in `BEGIN IMMEDIATE` transaction + 60 s idempotency guard | No transaction (race) |
 | 15 | Headless CLI safety enforced by (a) import discipline in `cmd/claude-monitor/main.go` and (b) CI test under `env -i` | Trust fyne's import to remain side-effect-free indefinitely |
 | 16 | User-space install at `~/.local/bin/`; `.deb` + AppImage from v0.2.0 | System-wide `.deb` only; AppImage-first |
-| 17 | Limits keyed off the API's self-describing `limits[]` array, by `(kind, scope_model)` | Fixed fields per limit — v2's `weekly_sonnet_percent` went stale when the API dropped it |
-| 18 | v2 databases are migrated into the v3 tables, not wiped | Wipe-on-bump as before — but usage history is the product, so discarding it defeats the point |
+| 17 | Limits keyed off the API's self-describing `limits[]` array, by `(kind, scope_model, scope_surface)` | Fixed fields per limit — v2's `weekly_sonnet_percent` went stale when the API dropped it |
+| 18 | v2 and v3 databases are migrated into the current tables, not wiped | Wipe-on-bump as before — but usage history is the product, so discarding it defeats the point |
 | 19 | `is_active` is stored raw and never displayed; "highest utilization" drives the icon and exit codes | Treating the undocumented flag as "the binding limit" in the UI |
 | 20 | The tray icon draws the model-scoped weekly limit as a horizontal rail under the two vertical bars, picks the scoped model with the highest utilization, and hides the rail while that limit reads 0% | A third identical vertical bar, or a second colour scale: colour already carries severity, so orientation is the free channel at 22px |
 | 21 | `.deb` upgrades restart the tray with SIGHUP: the postinst signals the PID in the runtime lock, and only when the lock carries the `restart=sighup` marker, so a tray from an older build survives the upgrade | A signal that defaults to ignore (SIGWINCH) needs no marker, but then a terminal resize also restarts a foreground tray. A systemd user unit with `deb-systemd-invoke --user` restarts only what systemd started, and the tray starts from an XDG autostart entry or the app menu. `pkill`/`pidof` name matching, as rygel does, also kills a concurrent `claude-monitor status` in a status-bar loop. Notify-only "restart to update", as Chrome and VS Code do |

@@ -324,3 +324,59 @@ func TestWeeklyScoped(t *testing.T) {
 		t.Errorf("got %s at %.0f%%, want Fable at 71%%", got.ScopeModel, got.Percent)
 	}
 }
+
+func TestOAuthUsage_SurfaceScope(t *testing.T) {
+	srv := serveBody(t, `{"limits": [
+		{"kind": "weekly_all", "group": "weekly", "percent": 40, "scope": null},
+		{"kind": "weekly_scoped", "group": "weekly", "percent": 10,
+		 "scope": {"model": null, "surface": "Cowork"}},
+		{"kind": "weekly_scoped", "group": "weekly", "percent": 20,
+		 "scope": {"model": null, "surface": {"id": "x", "display_name": "Desktop"}}},
+		{"kind": "weekly_scoped", "group": "weekly", "percent": 30,
+		 "scope": {"model": {"id": null, "display_name": "Fable"}, "surface": null}}
+	]}`)
+	defer srv.Close()
+
+	c := &Client{HTTPClient: http.DefaultClient, BaseURL: srv.URL}
+	r, err := c.OAuthUsage(context.Background(), "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Limits) != 4 {
+		t.Fatalf("limits: got %d, want 4: %+v", len(r.Limits), r.Limits)
+	}
+	for key, label := range map[string]string{
+		"weekly_scoped@Cowork":  "Weekly limit · Cowork",
+		"weekly_scoped@Desktop": "Weekly limit · Desktop",
+		"weekly_scoped:Fable":   "Weekly Fable limit",
+	} {
+		l, ok := r.Find(key)
+		if !ok {
+			t.Errorf("missing %s", key)
+			continue
+		}
+		if l.Label() != label {
+			t.Errorf("%s label: got %q, want %q", key, l.Label(), label)
+		}
+	}
+	if r.Limits[0].Kind != KindWeeklyAll {
+		t.Errorf("unscoped limit should sort first: %+v", r.Limits)
+	}
+}
+
+func TestOAuthUsage_DuplicateKeysKeepHighest(t *testing.T) {
+	srv := serveBody(t, `{"limits": [
+		{"kind": "weekly_scoped", "group": "weekly", "percent": 10, "scope": {"surface": {"unknown": 1}}},
+		{"kind": "weekly_scoped", "group": "weekly", "percent": 70, "scope": {"surface": {"unknown": 2}}}
+	]}`)
+	defer srv.Close()
+
+	c := &Client{HTTPClient: http.DefaultClient, BaseURL: srv.URL}
+	r, err := c.OAuthUsage(context.Background(), "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Limits) != 1 || r.Limits[0].Percent != 70 {
+		t.Errorf("got %+v, want one limit at 70%%", r.Limits)
+	}
+}

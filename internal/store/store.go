@@ -46,7 +46,7 @@ func openAt(path string) (*Store, error) {
 		}
 		_ = f.Close()
 
-		dsn = "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_txlock=immediate"
+		dsn = "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_txlock=immediate"
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -54,12 +54,7 @@ func openAt(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 
-	var ver int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&ver); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("read user_version: %w", err)
-	}
-	if err := applySchema(db, ver); err != nil {
+	if err := applySchema(db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -72,46 +67,84 @@ func openAt(path string) (*Store, error) {
 	return &Store{DB: db}, nil
 }
 
-// applySchema brings the database up to schemaVersion. v2 stored real usage
-// history in fixed columns; that history is the point of the app, so it is
-// migrated rather than discarded. Older versions predate any shape we can map
-// and are wiped, as before.
-func applySchema(db *sql.DB, ver int) error {
-	// Create current tables first — the v2 migration copies into them.
-	if _, err := db.Exec(schema); err != nil {
+// applySchema brings the database up to schemaVersion. Usage history is the
+// point of the app, so v2 and v3 databases are migrated; anything older
+// predates a shape we can map and is wiped.
+//
+// The version is read, migrated and bumped in one write transaction, so a
+// process that opens the database concurrently waits and then sees the result.
+func applySchema(db *sql.DB) error {
+	if _, err := db.Exec(pragmas); err != nil {
+		return fmt.Errorf("apply pragmas: %w", err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var ver int
+	if err := tx.QueryRow(`PRAGMA user_version`).Scan(&ver); err != nil {
+		return fmt.Errorf("read user_version: %w", err)
+	}
+	// Create current tables first: the v2 migration copies into them.
+	if _, err := tx.Exec(schema); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
 	}
 	if ver >= schemaVersion {
-		return nil
+		return tx.Commit()
 	}
 
-	if ver == 2 {
-		if err := migrateV2(db); err != nil {
+	switch ver {
+	case 3:
+		if err := migrateV3(tx); err != nil {
+			return fmt.Errorf("migrate v3 limits: %w", err)
+		}
+	case 2:
+		if err := migrateV2(tx); err != nil {
 			return fmt.Errorf("migrate v2 history: %w", err)
 		}
-		if _, err := db.Exec(`DROP TABLE IF EXISTS usage_history`); err != nil {
+		if _, err := tx.Exec(`DROP TABLE IF EXISTS usage_history`); err != nil {
 			return fmt.Errorf("drop usage_history: %w", err)
 		}
-	} else {
-		if _, err := db.Exec(wipeOldSchema); err != nil {
+	default:
+		if _, err := tx.Exec(wipeOldSchema); err != nil {
 			return fmt.Errorf("wipe old schema: %w", err)
 		}
-		if _, err := db.Exec(schema); err != nil {
+		if _, err := tx.Exec(schema); err != nil {
 			return fmt.Errorf("reapply schema: %w", err)
 		}
 	}
 
-	if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
+	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
 		return fmt.Errorf("set user_version: %w", err)
+	}
+	return tx.Commit()
+}
+
+// migrateV3 rebuilds usage_limit to add scope_surface to its primary key,
+// which SQLite cannot alter in place.
+func migrateV3(tx *sql.Tx) error {
+	const cols = `reading_id, kind, limit_group, scope_model, percent, severity, resets_at, is_active`
+	for _, stmt := range []string{
+		`ALTER TABLE usage_limit RENAME TO usage_limit_v3`,
+		usageLimitTable,
+		`INSERT INTO usage_limit (` + cols + `) SELECT ` + cols + ` FROM usage_limit_v3`,
+		`DROP TABLE usage_limit_v3`,
+		`CREATE INDEX IF NOT EXISTS idx_limit_reading ON usage_limit(reading_id)`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-// migrateV2 copies v2's fixed-column readings into v3's generic limit rows.
+// migrateV2 copies v2's fixed-column readings into generic limit rows.
 // weekly_sonnet_percent is dropped: the API stopped reporting seven_day_sonnet,
 // so every stored value is zero and carrying it forward would recreate exactly
 // the stale-column problem v3 exists to remove.
-func migrateV2(db *sql.DB) error {
+func migrateV2(tx *sql.Tx) error {
 	type v2row struct {
 		ts           string
 		session      sql.NullFloat64
@@ -122,9 +155,9 @@ func migrateV2(db *sql.DB) error {
 		synthetic    int
 	}
 
-	// Collect before inserting: the pool is capped at one connection, so an
-	// insert while the read cursor is open would deadlock.
-	rows, err := db.Query(`
+	// Collect before inserting: an insert while the read cursor is open would
+	// deadlock on the single connection.
+	rows, err := tx.Query(`
 		SELECT timestamp, session_percent, weekly_percent,
 		       session_reset, weekly_reset, raw_data, is_synthetic
 		FROM usage_history ORDER BY id ASC
@@ -149,16 +182,6 @@ func migrateV2(db *sql.DB) error {
 		return err
 	}
 	rows.Close()
-	if len(out) == 0 {
-		return nil
-	}
-
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-
 	for _, r := range out {
 		res, err := tx.Exec(`
 			INSERT INTO usage_reading (timestamp, raw_data, is_synthetic)
@@ -201,7 +224,7 @@ func migrateV2(db *sql.DB) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // Close closes the DB.

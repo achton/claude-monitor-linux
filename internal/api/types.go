@@ -232,7 +232,20 @@ func SortLimits(limits []Limit) {
 // ErrUnauthorized signals an invalid or expired token (HTTP 401).
 var ErrUnauthorized = errors.New("unauthorized — token may be expired or revoked")
 
-// ErrHTTP wraps any non-2xx, non-401 response.
+// ErrRateLimited signals HTTP 429. RetryAfter is zero when the response gave
+// no hint.
+type ErrRateLimited struct {
+	RetryAfter time.Duration
+}
+
+func (e *ErrRateLimited) Error() string {
+	if e.RetryAfter > 0 {
+		return fmt.Sprintf("rate-limited; retry after %s", e.RetryAfter.Round(time.Second))
+	}
+	return "rate-limited"
+}
+
+// ErrHTTP wraps any non-2xx, non-401, non-429 response.
 type ErrHTTP struct {
 	Status int
 	Body   string

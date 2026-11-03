@@ -173,6 +173,9 @@ cli_path = ""                  # claude binary; empty searches PATH and common l
 refresh_expired_token = true
 ```
 
+**"rate-limited until HH:MM"**: the usage endpoint asked for a pause. Polls
+resume on their own at that time.
+
 **"unauthorized"** — the token was rejected outright. Run `claude /login`.
 
 **Tray icon missing on GNOME** — see above.

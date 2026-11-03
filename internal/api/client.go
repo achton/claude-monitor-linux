@@ -12,7 +12,7 @@ import (
 // UserAgent is sent to the usage endpoint, which is version-sensitive. The
 // Makefile overrides it at build time via -ldflags (see USER_AGENT); this
 // default keeps `go build` and `go test` working on their own.
-var UserAgent = "claude-code/2.0.37"
+var UserAgent = "claude-code/2.1.317"
 
 const (
 	defaultTimeout = 15 * time.Second

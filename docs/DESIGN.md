@@ -28,7 +28,7 @@ store removes the bug class entirely. See decision #1 in the log.
 
 ### Goals
 
-1. Show current 5h-session and 7d-weekly Claude API quota usage in the
+1. Show current 5-hour and weekly Claude usage limits in the
    system tray.
 2. Provide a CLI surface (`status`, `poll`) for status-bar tools (waybar,
    polybar, tmux, shell prompts) via plain text, JSON, and Go template.

@@ -115,6 +115,9 @@ type oauthLimit struct {
 			ID          *string `json:"id"`
 			DisplayName string  `json:"display_name"`
 		} `json:"model"`
+		// Surface has never been populated in an observed response, so its
+		// shape is unknown; see scopeSurface.
+		Surface json.RawMessage `json:"surface"`
 	} `json:"scope"`
 }
 
@@ -144,16 +147,17 @@ func (b oauthUsageBody) limits() []Limit {
 		out := make([]Limit, 0, len(b.Limits))
 		for _, l := range b.Limits {
 			out = append(out, Limit{
-				Kind:       l.Kind,
-				Group:      l.Group,
-				Percent:    l.Percent,
-				Severity:   l.Severity,
-				ResetsAt:   parseTime(l.ResetsAt),
-				IsActive:   l.IsActive,
-				ScopeModel: l.scopeModel(),
+				Kind:         l.Kind,
+				Group:        l.Group,
+				Percent:      l.Percent,
+				Severity:     l.Severity,
+				ResetsAt:     parseTime(l.ResetsAt),
+				IsActive:     l.IsActive,
+				ScopeModel:   l.scopeModel(),
+				ScopeSurface: l.scopeSurface(),
 			})
 		}
-		return out
+		return dedupeLimits(out)
 	}
 
 	var out []Limit
@@ -179,6 +183,45 @@ func (l oauthLimit) scopeModel() string {
 		return ""
 	}
 	return l.Scope.Model.DisplayName
+}
+
+// scopeSurface accepts a bare string or an object carrying a name.
+func (l oauthLimit) scopeSurface() string {
+	if l.Scope == nil || len(l.Scope.Surface) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(l.Scope.Surface, &s) == nil {
+		return s
+	}
+	var obj map[string]any
+	if json.Unmarshal(l.Scope.Surface, &obj) != nil {
+		return ""
+	}
+	for _, k := range []string{"display_name", "name", "id", "type"} {
+		if v, ok := obj[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// dedupeLimits keeps the highest reading per key, so two limits the parser
+// cannot tell apart never collide in the store.
+func dedupeLimits(in []Limit) []Limit {
+	out := make([]Limit, 0, len(in))
+	idx := map[string]int{}
+	for _, l := range in {
+		if i, ok := idx[l.Key()]; ok {
+			if l.Percent > out[i].Percent {
+				out[i] = l
+			}
+			continue
+		}
+		idx[l.Key()] = len(out)
+		out = append(out, l)
+	}
+	return out
 }
 
 func (b oauthUsageBody) spend() Spend {

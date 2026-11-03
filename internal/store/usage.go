@@ -80,10 +80,10 @@ func (s *Store) InsertReading(ctx context.Context, tx *sql.Tx,
 		}
 		if _, err := exec(ctx, `
 			INSERT INTO usage_limit (
-				reading_id, kind, limit_group, scope_model,
+				reading_id, kind, limit_group, scope_model, scope_surface,
 				percent, severity, resets_at, is_active
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		`, id, l.Kind, l.Group, l.ScopeModel,
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, id, l.Kind, l.Group, l.ScopeModel, l.ScopeSurface,
 			l.Percent, l.Severity, resets, active); err != nil {
 			return 0, err
 		}
@@ -133,7 +133,7 @@ func (s *Store) limitsFor(ctx context.Context, tx *sql.Tx, readingID int64) ([]a
 		query = tx.QueryContext
 	}
 	rows, err := query(ctx, `
-		SELECT kind, limit_group, scope_model, percent, severity, resets_at, is_active
+		SELECT kind, limit_group, scope_model, scope_surface, percent, severity, resets_at, is_active
 		FROM usage_limit WHERE reading_id = ?
 	`, readingID)
 	if err != nil {
@@ -159,7 +159,7 @@ func scanLimit(r rowScanner) (api.Limit, error) {
 	var l api.Limit
 	var resets sql.NullString
 	var active int
-	if err := r.Scan(&l.Kind, &l.Group, &l.ScopeModel,
+	if err := r.Scan(&l.Kind, &l.Group, &l.ScopeModel, &l.ScopeSurface,
 		&l.Percent, &l.Severity, &resets, &active); err != nil {
 		return l, err
 	}
@@ -224,7 +224,7 @@ func (s *Store) ReadingRange(ctx context.Context, since time.Time) ([]Reading, e
 	}
 
 	lrows, err := s.DB.QueryContext(ctx, `
-		SELECT l.reading_id, l.kind, l.limit_group, l.scope_model,
+		SELECT l.reading_id, l.kind, l.limit_group, l.scope_model, l.scope_surface,
 		       l.percent, l.severity, l.resets_at, l.is_active
 		FROM usage_limit l
 		JOIN usage_reading r ON r.id = l.reading_id
@@ -239,7 +239,7 @@ func (s *Store) ReadingRange(ctx context.Context, since time.Time) ([]Reading, e
 		var l api.Limit
 		var resets sql.NullString
 		var active int
-		if err := lrows.Scan(&readingID, &l.Kind, &l.Group, &l.ScopeModel,
+		if err := lrows.Scan(&readingID, &l.Kind, &l.Group, &l.ScopeModel, &l.ScopeSurface,
 			&l.Percent, &l.Severity, &resets, &active); err != nil {
 			return nil, err
 		}
@@ -265,7 +265,7 @@ func (s *Store) ReadingRange(ctx context.Context, since time.Time) ([]Reading, e
 // list of limit kinds.
 func (s *Store) LimitKeysSince(ctx context.Context, since time.Time) ([]api.Limit, error) {
 	rows, err := s.DB.QueryContext(ctx, `
-		SELECT DISTINCT l.kind, l.limit_group, l.scope_model
+		SELECT DISTINCT l.kind, l.limit_group, l.scope_model, l.scope_surface
 		FROM usage_limit l
 		JOIN usage_reading r ON r.id = l.reading_id
 		WHERE r.timestamp >= ? AND r.is_synthetic = 0
@@ -277,7 +277,7 @@ func (s *Store) LimitKeysSince(ctx context.Context, since time.Time) ([]api.Limi
 	var out []api.Limit
 	for rows.Next() {
 		var l api.Limit
-		if err := rows.Scan(&l.Kind, &l.Group, &l.ScopeModel); err != nil {
+		if err := rows.Scan(&l.Kind, &l.Group, &l.ScopeModel, &l.ScopeSurface); err != nil {
 			return nil, err
 		}
 		out = append(out, l)

@@ -13,15 +13,16 @@ import (
 
 // LimitView is one limit as exposed to JSON and Go-template renderers.
 type LimitView struct {
-	Key        string  `json:"key"`
-	Kind       string  `json:"kind"`
-	Group      string  `json:"group"`
-	Label      string  `json:"label"`
-	ScopeModel string  `json:"scope_model,omitempty"`
-	Percent    float64 `json:"percent"`
-	Severity   string  `json:"severity"`
-	ResetIn    string  `json:"reset_in,omitempty"`
-	ResetAt    string  `json:"reset_at,omitempty"`
+	Key          string  `json:"key"`
+	Kind         string  `json:"kind"`
+	Group        string  `json:"group"`
+	Label        string  `json:"label"`
+	ScopeModel   string  `json:"scope_model,omitempty"`
+	ScopeSurface string  `json:"scope_surface,omitempty"`
+	Percent      float64 `json:"percent"`
+	Severity     string  `json:"severity"`
+	ResetIn      string  `json:"reset_in,omitempty"`
+	ResetAt      string  `json:"reset_at,omitempty"`
 }
 
 // StatusView is the structure exposed to JSON and Go-template renderers.
@@ -150,13 +151,14 @@ func buildStatusView(env *Env) (StatusView, error) {
 
 	for _, l := range rec.Limits {
 		lv := LimitView{
-			Key:        l.Key(),
-			Kind:       l.Kind,
-			Group:      l.Group,
-			Label:      l.Label(),
-			ScopeModel: l.ScopeModel,
-			Percent:    round1(l.Percent),
-			Severity:   l.Severity,
+			Key:          l.Key(),
+			Kind:         l.Kind,
+			Group:        l.Group,
+			Label:        l.Label(),
+			ScopeModel:   l.ScopeModel,
+			ScopeSurface: l.ScopeSurface,
+			Percent:      round1(l.Percent),
+			Severity:     l.Severity,
 		}
 		if !l.ResetsAt.IsZero() {
 			lv.ResetAt = l.ResetsAt.UTC().Format(time.RFC3339)

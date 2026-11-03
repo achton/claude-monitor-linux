@@ -410,3 +410,28 @@ func TestOAuthUsage_RateLimited(t *testing.T) {
 		}
 	}
 }
+
+func TestSharesAndOffReasonFromRaw(t *testing.T) {
+	raw := `{
+		"limits": [
+			{"kind": "session", "group": "session", "percent": 5},
+			{"kind": "weekly_all", "group": "weekly", "percent": 47},
+			{"kind": "weekly_scoped", "group": "weekly", "percent": 12,
+			 "scope": {"model": {"id": null, "display_name": "Fable"}, "surface": null}}
+		],
+		"weekly_scoped_shares": [
+			{"limit_index": 2, "used_percent_of_weekly": 6, "allowance_percent_of_weekly": 50},
+			{"limit_index": 9, "used_percent_of_weekly": 1, "allowance_percent_of_weekly": 1}
+		],
+		"spend": {"used": {"amount_minor": 0, "currency": "EUR", "exponent": 2}, "limit": null,
+		          "percent": 0, "enabled": false, "disabled_reason": "out_of_credits"}
+	}`
+	shares := SharesFromRaw(raw)
+	if got := shares["weekly_scoped:Fable"]; got != (WeeklyShare{UsedPercent: 6, AllowancePercent: 50}) || len(shares) != 1 {
+		t.Errorf("shares: got %+v", shares)
+	}
+	s, ok := SpendFromRaw(raw)
+	if !ok || s.OffReason() != "out of credits" || s.Summary() != "" {
+		t.Errorf("spend: ok=%v reason=%q summary=%q", ok, s.OffReason(), s.Summary())
+	}
+}

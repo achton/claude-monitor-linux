@@ -18,17 +18,17 @@ func TestBuildLimitRowUpdater(t *testing.T) {
 		Kind: api.KindSession, Group: api.GroupSession, Percent: 20,
 		ResetsAt: time.Now().Add(2 * time.Hour),
 	}
-	if _, update := buildLimitRow(withReset, ""); update == nil {
+	if _, update := buildLimitRow(withReset, "", ""); update == nil {
 		t.Error("a limit with a reset window should return a time updater")
 	}
 
 	noReset := api.Limit{Kind: api.KindSpend, Group: api.GroupSpend, Percent: 4}
-	if _, update := buildLimitRow(noReset, ""); update != nil {
+	if _, update := buildLimitRow(noReset, "", ""); update != nil {
 		t.Error("a limit with no reset window should not return an updater")
 	}
 
 	// A money detail replaces the countdown, so there is nothing to tick.
-	if _, update := buildLimitRow(noReset, "0.00 of 50.00 EUR"); update != nil {
+	if _, update := buildLimitRow(noReset, "0.00 of 50.00 EUR", ""); update != nil {
 		t.Error("a limit rendering a detail string should not return an updater")
 	}
 }

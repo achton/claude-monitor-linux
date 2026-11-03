@@ -208,10 +208,8 @@ func (d *Dashboard) buildBody() fyne.CanvasObject {
 	d.timeUpdaters = nil
 	env := d.env
 	rec, recErr := env.Store.LatestReading(env.Ctx)
-	label, lastErr, _, _ := env.Poller.Status()
-	if label == "" {
-		label = "Claude Code"
-	}
+	_, lastErr, _, _ := env.Poller.Status()
+	label := env.Poller.AccountLabel()
 
 	parts := []fyne.CanvasObject{}
 	if until := env.Poller.RateLimitedUntil(); !until.IsZero() {
@@ -240,22 +238,28 @@ func (d *Dashboard) buildBody() fyne.CanvasObject {
 	default:
 		// Credit spend is money, not a window; read the amounts back out of the
 		// stored response body so the row says what it actually costs.
-		spendText := ""
+		var spend api.Spend
+		var shares map[string]api.WeeklyShare
 		if rec.RawData.Valid {
-			if s, ok := api.SpendFromRaw(rec.RawData.String); ok {
-				spendText = s.Summary()
-			}
+			spend, _ = api.SpendFromRaw(rec.RawData.String)
+			shares = api.SharesFromRaw(rec.RawData.String)
 		}
 		for _, l := range rec.Limits {
-			detail := ""
+			detail, note := "", ""
 			if l.Kind == api.KindSpend {
-				detail = spendText
+				detail = spend.Summary()
 			}
-			row, update := buildLimitRow(l, detail)
+			if s, ok := shares[l.Key()]; ok {
+				note = fmt.Sprintf("Uses %.0f%% of the weekly limit, of up to %.0f%%", s.UsedPercent, s.AllowancePercent)
+			}
+			row, update := buildLimitRow(l, detail, note)
 			parts = append(parts, row)
 			if update != nil {
 				d.timeUpdaters = append(d.timeUpdaters, update)
 			}
+		}
+		if reason := spend.OffReason(); reason != "" {
+			parts = append(parts, mutedText("Extra usage off: "+reason))
 		}
 	}
 
@@ -411,8 +415,9 @@ func humanSpanName(span time.Duration) string {
 // the bar beneath. The previous 36pt number dominated the layout while carrying
 // less information than the reset countdown next to it.
 // detail overrides the trailing text when a limit has something more useful to
-// say than a reset countdown (credit spend reports money).
-func buildLimitRow(l api.Limit, detail string) (fyne.CanvasObject, func()) {
+// say than a reset countdown (credit spend reports money). note, when set, is a
+// muted line under the bar.
+func buildLimitRow(l api.Limit, detail, note string) (fyne.CanvasObject, func()) {
 	name := widget.NewLabel(l.Label())
 
 	pct := canvas.NewText(fmt.Sprintf("%.0f%%", l.Percent), colorForPct(l.Percent))
@@ -433,7 +438,17 @@ func buildLimitRow(l api.Limit, detail string) (fyne.CanvasObject, func()) {
 	}
 
 	top := container.NewBorder(nil, nil, name, container.NewHBox(pct, reset))
-	return container.NewVBox(top, newProgressBar(l.Percent)), update
+	row := container.NewVBox(top, newProgressBar(l.Percent))
+	if note != "" {
+		row.Add(mutedText(note))
+	}
+	return row, update
+}
+
+func mutedText(s string) fyne.CanvasObject {
+	t := canvas.NewText(s, theme.Color(theme.ColorNamePlaceHolder))
+	t.TextSize = theme.CaptionTextSize()
+	return container.NewPadded(t)
 }
 
 // agoText renders an elapsed duration as a phrase that already reads correctly,

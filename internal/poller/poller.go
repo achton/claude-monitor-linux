@@ -67,6 +67,21 @@ func (e *RateLimitedError) Error() string {
 	return "usage endpoint rate-limited until " + e.Until.Local().Format("15:04")
 }
 
+// AccountLabel names the account, e.g. "Claude Team · Max 5x": from the last
+// poll, else read from the credentials file.
+func (p *Poller) AccountLabel() string {
+	p.mu.Lock()
+	label := p.label
+	p.mu.Unlock()
+	if label != "" {
+		return label
+	}
+	if creds, err := ReadClaudeCodeCredentials(p.ConfigDir); err == nil {
+		return creds.Label
+	}
+	return "Claude Code"
+}
+
 // RateLimitedUntil returns when polling resumes, or the zero time when it is
 // not paused.
 func (p *Poller) RateLimitedUntil() time.Time {

@@ -9,20 +9,23 @@ import (
 	"math"
 	"text/template"
 	"time"
+
+	"github.com/achton/claude-monitor-linux/internal/api"
 )
 
 // LimitView is one limit as exposed to JSON and Go-template renderers.
 type LimitView struct {
-	Key          string  `json:"key"`
-	Kind         string  `json:"kind"`
-	Group        string  `json:"group"`
-	Label        string  `json:"label"`
-	ScopeModel   string  `json:"scope_model,omitempty"`
-	ScopeSurface string  `json:"scope_surface,omitempty"`
-	Percent      float64 `json:"percent"`
-	Severity     string  `json:"severity"`
-	ResetIn      string  `json:"reset_in,omitempty"`
-	ResetAt      string  `json:"reset_at,omitempty"`
+	Key          string           `json:"key"`
+	Kind         string           `json:"kind"`
+	Group        string           `json:"group"`
+	Label        string           `json:"label"`
+	ScopeModel   string           `json:"scope_model,omitempty"`
+	ScopeSurface string           `json:"scope_surface,omitempty"`
+	WeeklyShare  *api.WeeklyShare `json:"weekly_share,omitempty"`
+	Percent      float64          `json:"percent"`
+	Severity     string           `json:"severity"`
+	ResetIn      string           `json:"reset_in,omitempty"`
+	ResetAt      string           `json:"reset_at,omitempty"`
 }
 
 // StatusView is the structure exposed to JSON and Go-template renderers.
@@ -138,9 +141,10 @@ func buildStatusView(env *Env) (StatusView, error) {
 	if err != nil {
 		return StatusView{}, err
 	}
-	label, _, _, _ := env.Poller.Status()
-	if label == "" {
-		label = "Claude Code"
+	label := env.Poller.AccountLabel()
+	var shares map[string]api.WeeklyShare
+	if rec.RawData.Valid {
+		shares = api.SharesFromRaw(rec.RawData.String)
 	}
 	v := StatusView{
 		AccountName:    label,
@@ -163,6 +167,9 @@ func buildStatusView(env *Env) (StatusView, error) {
 		if !l.ResetsAt.IsZero() {
 			lv.ResetAt = l.ResetsAt.UTC().Format(time.RFC3339)
 			lv.ResetIn = humanDuration(time.Until(l.ResetsAt))
+		}
+		if s, ok := shares[l.Key()]; ok {
+			lv.WeeklyShare = &s
 		}
 		v.Limits = append(v.Limits, lv)
 	}

@@ -66,8 +66,8 @@ func TestExtractCredentialFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Label != "Claude Code (team)" {
-		t.Errorf("label: got %q, want %q", c.Label, "Claude Code (team)")
+	if c.Label != "Claude Team · Max 5x" {
+		t.Errorf("label: got %q, want %q", c.Label, "Claude Team · Max 5x")
 	}
 	if got, want := c.ExpiresAt.UnixMilli(), exp; got != want {
 		t.Errorf("expiry: got %d, want %d", got, want)
@@ -90,8 +90,8 @@ func TestLabelIgnoresMCPSubtree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Label != "Claude Code (max)" {
-		t.Errorf("label: got %q, want %q", c.Label, "Claude Code (max)")
+	if c.Label != "Claude Max" {
+		t.Errorf("label: got %q, want %q", c.Label, "Claude Max")
 	}
 }
 
@@ -206,7 +206,7 @@ func TestSnakeCaseSchema(t *testing.T) {
 	if c.Token != claudeToken {
 		t.Errorf("token: got %q, want %q", c.Token, claudeToken)
 	}
-	if c.Label != "Claude Code (pro)" {
+	if c.Label != "Claude Pro" {
 		t.Errorf("label: got %q", c.Label)
 	}
 }
@@ -235,5 +235,20 @@ func TestConfigDirResolution(t *testing.T) {
 	c, err = ReadClaudeCodeCredentials(cfgDir)
 	if err != nil || c.Token != "from-config" {
 		t.Fatalf("configured dir should win: got %q, %v", c.Token, err)
+	}
+}
+
+func TestPlanLabel(t *testing.T) {
+	for _, tc := range []struct{ sub, tier, want string }{
+		{"team", "default_claude_max_5x", "Claude Team · Max 5x"},
+		{"max", "default_claude_max_20x", "Claude Max 20x"},
+		{"pro", "default_claude_pro", "Claude Pro"},
+		{"pro", "", "Claude Pro"},
+		{"", "", ""},
+	} {
+		sec := map[string]any{"subscriptionType": tc.sub, "rateLimitTier": tc.tier}
+		if got := planLabel(sec); got != tc.want {
+			t.Errorf("planLabel(%q, %q) = %q, want %q", tc.sub, tc.tier, got, tc.want)
+		}
 	}
 }
